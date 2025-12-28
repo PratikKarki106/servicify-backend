@@ -17,10 +17,13 @@ const AppointmentSchema = new mongoose.Schema(
       imageUrl: { type: String }, 
     },
     date: { type: Date, required: true },
-    time: { type: String, required: true }, // e.g. "10:30 AM"
+    time: { type: String, required: true }, 
     pickupRequired: { type: Boolean, default: false },
     pickupAddress: { type: String },
     status: { type: String, enum: ["booked", "confirmed", "completed", "canceled"], default: "booked" },
+    email: { type: String },
+    name: { type: String },
+    contactNumber: { type: String },
   },
   { timestamps: true }
 );
