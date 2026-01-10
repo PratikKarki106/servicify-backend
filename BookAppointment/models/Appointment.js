@@ -16,7 +16,7 @@ const AppointmentSchema = new mongoose.Schema(
       notes: { type: String },
       imageUrl: { type: String }, 
     },
-    date: { type: Date, required: true },
+    date: { type: String, required: true },
     time: { type: String, required: true }, 
     pickupRequired: { type: Boolean, default: false },
     pickupAddress: { type: String },
