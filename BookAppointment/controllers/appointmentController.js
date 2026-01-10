@@ -56,9 +56,6 @@ export const createAppointment = async (req, res) => {
       return res.status(400).json({ message: "Missing fields" });
     }
 
-    const appointmentDate = new Date(date);
-    appointmentDate.setHours(0, 0, 0, 0);
-
     // 🧠 Determine service pool
     let servicePool = [serviceType];
     if (serviceType === "repair" || serviceType === "checkup") {
@@ -67,7 +64,7 @@ export const createAppointment = async (req, res) => {
 
     // 🔢 Count existing appointments for this date/time/service pool
     const existingCount = await Appointment.countDocuments({
-      date: appointmentDate,
+      date,
       time,
       serviceType: { $in: servicePool },
     });
@@ -89,7 +86,7 @@ export const createAppointment = async (req, res) => {
       userId: Number(userId),
       serviceType,
       vehicleInfo,
-      date: appointmentDate,
+      date,
       time,
       pickupRequired,
       pickupAddress: pickupRequired ? pickupAddress : undefined,
@@ -113,8 +110,6 @@ export const getSlotAvailability = async (req, res) => {
     const { date, serviceType } = req.query;
     if (!date || !serviceType) return res.status(400).json({ message: "Date and serviceType required" });
 
-    const appointmentDate = new Date(date);
-    appointmentDate.setHours(0, 0, 0, 0);
 
     const slots = SERVICE_SLOTS[serviceType];
     if (!slots) return res.status(400).json({ message: "Invalid service type" });
@@ -126,7 +121,7 @@ export const getSlotAvailability = async (req, res) => {
     const availability = await Promise.all(
       slots.map(async (time) => {
         const count = await Appointment.countDocuments({
-          date: appointmentDate,
+          date,
           time,
           serviceType: { $in: pool }
         });
@@ -218,12 +213,8 @@ export const getAllAppointments = async (req, res) => {
     if (status) filter.status = status;
 
     if (date) {
-      const filterDate = new Date(date);
-      filterDate.setHours(0, 0, 0, 0);
-      const nextDay = new Date(filterDate);
-      nextDay.setDate(nextDay.getDate() + 1);
+      const filterDate = date;
 
-      filter.date = { $gte: filterDate, $lt: nextDay };
     }
 
     const skip = (page - 1) * limit;

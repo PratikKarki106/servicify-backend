@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 import passport from "./Users/config/passport.js";
 import appointmentRoutes from "./BookAppointment/routes/appointmentRoutes.js";
 import errorHandler  from "./middleware/errorHandler.js";
+import catalogRoutes from "./Catalogue/routes/catalogRoutes.js";
 
 
 const app = express();
@@ -44,6 +45,7 @@ mongoose.connect(process.env.MONGO_URI)
 app.use("/auth", authRoutes);
 app.use("/auth", localAuthRoutes);
 app.use("/appointments", appointmentRoutes);
+app.use("/api", catalogRoutes);
 
 app.get("/", (req, res) => {
   res.send("Servicify backend is running!");
