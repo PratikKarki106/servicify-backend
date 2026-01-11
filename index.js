@@ -10,6 +10,7 @@ import passport from "./Users/config/passport.js";
 import appointmentRoutes from "./BookAppointment/routes/appointmentRoutes.js";
 import errorHandler  from "./middleware/errorHandler.js";
 import catalogRoutes from "./Catalogue/routes/catalogRoutes.js";
+import packageRoutes from "./Package/routes/packageRoutes.js";
 
 
 const app = express();
@@ -46,6 +47,7 @@ app.use("/auth", authRoutes);
 app.use("/auth", localAuthRoutes);
 app.use("/appointments", appointmentRoutes);
 app.use("/api", catalogRoutes);
+app.use("/api/packages", packageRoutes);
 
 app.get("/", (req, res) => {
   res.send("Servicify backend is running!");
