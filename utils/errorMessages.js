@@ -47,6 +47,30 @@ const errorMessages = {
   IMAGE_UPLOAD_FAILED: "Failed to upload vehicle image",
   CANCEL_FAILED: "Failed to cancel appointment",
   UPDATE_FAILED: "Failed to update appointment details",
+
+  // Package Management
+  PACKAGE_NOT_FOUND: "Package not found",
+  PACKAGE_ALREADY_EXISTS: "Package with this name already exists",
+  PACKAGE_CREATION_FAILED: "Failed to create package",
+  PACKAGE_UPDATE_FAILED: "Failed to update package",
+  PACKAGE_DELETE_FAILED: "Failed to delete package",
+  PACKAGE_EXPIRED: "This package is no longer available for purchase",
+  PACKAGE_INACTIVE: "This package is currently inactive",
+  PACKAGE_PURCHASE_FAILED: "Failed to purchase package",
+  PACKAGE_ALREADY_PURCHASED: "You have already purchased this package",
+  PACKAGE_NO_CREDITS: "No service credits remaining in this package",
+  INVALID_PURCHASE_DATE: "Purchase date cannot be in the future",
+  INVALID_EXPIRY_DATE: "Expiry date must be in the future",
+  INVALID_SERVICE_COUNT: "Service count must be at least 1",
+  INVALID_PRICE: "Price must be greater than 0",
+  PACKAGE_PURCHASE_DEADLINE_PASSED: "Purchase deadline has passed for this package",
+  MAX_PURCHASE_LIMIT_REACHED: "Maximum purchase limit reached for this package",
+  INSUFFICIENT_CREDITS: "Insufficient service credits to book this service",
+
+  USER_PACKAGE_NOT_FOUND: "User package not found",
+  USER_PACKAGE_EXPIRED: "Your package has expired",
+  SERVICE_CREDIT_USAGE_FAILED: "Failed to use service credit",
+  CREDIT_REFUND_FAILED: "Failed to refund service credit",
 };
 
 export default errorMessages;
