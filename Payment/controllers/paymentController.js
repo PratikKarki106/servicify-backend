@@ -383,6 +383,11 @@ const khaltiCallback = async (req, res) => {
 
                 await packagePurchase.save();
 
+                // Increment totalPurchases counter in Package model
+                await Package.findByIdAndUpdate(payment.packageId, {
+                  $inc: { totalPurchases: 1 }
+                });
+
                 // Update payment with package purchase ID
                 payment.packagePurchaseId = packagePurchase._id;
                 await payment.save();

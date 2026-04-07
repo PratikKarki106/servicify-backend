@@ -6,12 +6,17 @@ const packageSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  price: {
+  description: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  actualPrice: {
     type: Number,
     required: true,
-    min: 1
+    min: 0
   },
-  serviceCount: {
+  discountedPrice: {
     type: Number,
     required: true,
     min: 1
@@ -20,11 +25,28 @@ const packageSchema = new mongoose.Schema({
     type: Date,
     required: true
   },
-  description: String,
-  benefits: [String],
+  features: {
+    type: [String],
+    required: true,
+    validate: {
+      validator: function(v) {
+        return v.length <= 5;
+      },
+      message: 'Features cannot exceed 5 items'
+    }
+  },
   serviceType: {
     type: String,
     default: 'general'
+  },
+  credits: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  validityDays: {
+    type: Number,
+    default: 365
   },
   isActive: {
     type: Boolean,
@@ -36,6 +58,16 @@ const packageSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Virtual to check if package is expired
+packageSchema.virtual('isExpired').get(function() {
+  return new Date(this.purchaseDeadline) < new Date();
+});
+
+// Virtual to check if package is available
+packageSchema.virtual('isAvailable').get(function() {
+  return this.isActive && !this.isExpired;
 });
 
 const Package = mongoose.model('Package', packageSchema);

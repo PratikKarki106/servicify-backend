@@ -5,22 +5,25 @@ import {
   getAppointmentsByUser,
   getAppointmentById,
   getAllAppointments,
-  updateAppointmentStatus,  // Add this
-  updateAppointment        // Add this if needed
+  updateAppointmentStatus,
+  updateAppointment,
+  cancelAppointment,
+  updateBillItems
 } from '../controllers/appointmentController.js';
 
 const router = express.Router();
 
 // Existing routes
-router.get('/appointment', getAllAppointments);  
+router.get('/appointment', getAllAppointments);
 router.post('/', createAppointment);
 router.get('/availability', getSlotAvailability);
 router.get('/user/:userId', getAppointmentsByUser);
-router.get('/appointment/:id', getAppointmentById);
+router.get('/appointment/:appointmentId', getAppointmentById);
 
-
-// NEW: Add update routes
-router.patch('/appointment/:id/status', updateAppointmentStatus);  // For status updates only
-router.put('/appointment/:id', updateAppointment);  // For full updates (optional)
+// Update routes
+router.patch('/appointment/:appointmentId/status', updateAppointmentStatus);
+router.put('/appointment/:appointmentId', updateAppointment);
+router.patch('/appointment/cancel/:appointmentId', cancelAppointment);
+router.put('/appointment/:appointmentId/bill', updateBillItems);
 
 export default router;

@@ -1,4 +1,6 @@
 import Appointment from "../models/Appointment.js";
+import Notification from "../../Users/models/Notification.js";
+import AdminNotification from "../../Users/models/AdminNotification.js";
 import errorMessages from "../../utils/errorMessages.js";
 
 // 🔢 Slot limits per service
@@ -36,6 +38,45 @@ const SERVICE_SLOTS = {
 };
 
 
+// Helper function to create notification
+const createNotificationForAppointment = async (userId, title, message, type, appointmentId) => {
+  try {
+    const notification = new Notification({
+      userId: Number(userId),
+      title,
+      message,
+      type,
+      metadata: {
+        appointmentId: appointmentId.toString(),
+        link: `/user/history/${appointmentId}` // Link to appointment history
+      }
+    });
+    await notification.save();
+    return notification;
+  } catch (error) {
+    console.error("NOTIFICATION CREATION ERROR:", error);
+    // Don't throw error as it shouldn't affect the main appointment creation
+  }
+};
+
+// Helper function to create admin notification
+const createAdminNotification = async (title, message, type, metadata, priority = 'medium') => {
+  try {
+    const notification = new AdminNotification({
+      title,
+      message,
+      type,
+      metadata,
+      priority
+    });
+    await notification.save();
+    return notification;
+  } catch (error) {
+    console.error("ADMIN NOTIFICATION CREATION ERROR:", error);
+    // Don't throw error as it shouldn't affect the main operation
+  }
+};
+
 // ✅ Create new appointment
 export const createAppointment = async (req, res) => {
   try {
@@ -52,7 +93,7 @@ export const createAppointment = async (req, res) => {
       contactNumber
     } = req.body;
 
-    if (!userId || !serviceType || !vehicleInfo || !date || !time) {
+    if (!userId || !serviceType || !vehicleInfo || !date || !time ) {
       return res.status(400).json({ message: "Missing fields" });
     }
 
@@ -81,9 +122,19 @@ export const createAppointment = async (req, res) => {
       });
     }
 
+    const lastestAppointment = await Appointment.findOne()
+    .sort({appointmentId: -1})
+    .select('appointmentId');
+
+    let nextAppointmentId = 1;
+    if (lastestAppointment && lastestAppointment.appointmentId) {
+      nextAppointmentId = lastestAppointment.appointmentId + 1; 
+
+    }
     // 📝 Create appointment
     const appointment = new Appointment({
       userId: Number(userId),
+      appointmentId: nextAppointmentId,
       serviceType,
       vehicleInfo,
       date,
@@ -96,6 +147,54 @@ export const createAppointment = async (req, res) => {
     });
 
     await appointment.save();
+
+    // Create admin notification for new booking
+    await createAdminNotification(
+      "New Appointment Booking",
+      `New ${serviceType} appointment booked for ${date} at ${time}`,
+      "booking",
+      {
+        appointmentId: appointment.appointmentId.toString(),
+        userId: appointment.userId,
+        serviceType: appointment.serviceType,
+        link: `/admin/view-appointment`
+      },
+      'high'
+    );
+
+    // Get the io instance to emit WebSocket events
+    const io = req.app.get('io');
+
+    // Emit WebSocket event for real-time updates to admin
+    if (io) {
+      // Emit to admin room for real-time dashboard updates
+      io.to('admin_room').emit('new_appointment', {
+        appointmentId: appointment.appointmentId,
+        serviceType: appointment.serviceType,
+        date: appointment.date,
+        time: appointment.time,
+        message: 'New appointment created'
+      });
+      // Emit to the specific user
+      io.to(`user_${userId}`).emit('appointment_created', {
+        appointment: appointment.toObject()
+      });
+
+      // Emit to admin room for admin dashboard updates
+      io.to('admin_room').emit('appointment_created', {
+        appointment: appointment.toObject(),
+        message: `New appointment created for user ${userId}`
+      });
+    }
+
+    // Create notification for successful appointment booking
+    await createNotificationForAppointment(
+      userId,
+      "Appointment Booked Successfully!",
+      `Your ${serviceType} appointment has been booked for ${date} at ${time}.`,
+      "appointment",
+      appointment.appointmentId
+    );
 
     res.status(201).json({ success: true, appointment });
   } catch (error) {
@@ -143,7 +242,7 @@ export const getSlotAvailability = async (req, res) => {
 export const getAppointmentsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const appointments = await Appointment.find({ userId });
+    const appointments = await Appointment.find({ userId: Number(userId) });
 
     if (!appointments || appointments.length === 0) {
       return res.status(404).json({
@@ -167,8 +266,8 @@ export const getAppointmentsByUser = async (req, res) => {
 // ✅ Get single appointment by ID
 export const getAppointmentById = async (req, res) => {
   try {
-    const { id } = req.params;
-    const appointment = await Appointment.findById(id);
+    const { appointmentId } = req.params;
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
 
     if (!appointment) {
       return res.status(404).json({
@@ -213,8 +312,8 @@ export const getAllAppointments = async (req, res) => {
     if (status) filter.status = status;
 
     if (date) {
-      const filterDate = date;
-
+      // Filter by exact date match (match the date string stored in the database)
+      filter.date = date;
     }
 
     const skip = (page - 1) * limit;
@@ -259,7 +358,7 @@ export const getAllAppointments = async (req, res) => {
 // ✅ Update appointment status
 export const updateAppointmentStatus = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { appointmentId } = req.params;
     const { status } = req.body;
 
     if (!status) {
@@ -270,7 +369,7 @@ export const updateAppointmentStatus = async (req, res) => {
     }
 
     // Validate status value
-    const validStatuses = ['booked', 'confirmed', 'cancelled', 'completed', 'in-progress'];
+    const validStatuses = ['booked', 'confirmed', 'in-progress', 'payment', 'completed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -278,8 +377,8 @@ export const updateAppointmentStatus = async (req, res) => {
       });
     }
 
-    const appointment = await Appointment.findById(id);
-    
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
+
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -288,11 +387,87 @@ export const updateAppointmentStatus = async (req, res) => {
       });
     }
 
+    if (appointment.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot update status of a cancelled appointment",
+        appointmentId: appointment.appointmentId,
+        currentStatus: appointment.status
+      });
+    }
+
+    // Store the previous status to determine notification message
+    const previousStatus = appointment.status;
+
     // Update status and set updatedAt timestamp
     appointment.status = status;
     appointment.updatedAt = new Date();
-    
+
     await appointment.save();
+
+    // Get the io instance to emit WebSocket events
+    const io = req.app.get('io');
+
+    // Emit WebSocket event for real-time updates
+    if (io) {
+      // Emit to the specific user
+      io.to(`user_${appointment.userId}`).emit('appointment_status_updated', {
+        appointmentId: appointment.appointmentId,
+        status: status,
+        previousStatus: previousStatus,
+        message: `Appointment status updated to ${status}`
+      });
+
+      // Emit to admin room for admin dashboard updates
+      io.to('admin_room').emit('appointment_status_updated', {
+        appointmentId: appointment.appointmentId,
+        userId: appointment.userId,
+        status: status,
+        previousStatus: previousStatus,
+        message: `Appointment ${appointment.appointmentId} status updated to ${status} for user ${appointment.userId}`
+      });
+    }
+
+    // Create notification based on status change
+    if (previousStatus !== status) {
+      let notificationTitle = "";
+      let notificationMessage = "";
+
+      switch (status) {
+        case 'confirmed':
+          notificationTitle = "Appointment Confirmed!";
+          notificationMessage = `Your appointment for ${appointment.serviceType} on ${appointment.date} at ${appointment.time} has been confirmed.`;
+          break;
+        case 'cancelled':
+          notificationTitle = "Appointment Cancelled";
+          notificationMessage = `Your appointment for ${appointment.serviceType} on ${appointment.date} at ${appointment.time} has been cancelled.`;
+          break;
+        case 'completed':
+          notificationTitle = "Service Completed!";
+          notificationMessage = `Your ${appointment.serviceType} service has been completed successfully.`;
+          break;
+        case 'in-progress':
+          notificationTitle = "Service In Progress";
+          notificationMessage = `Your ${appointment.serviceType} service is now in progress.`;
+          break;
+        case 'payment':
+          notificationTitle = "Payment Due";
+          notificationMessage = `Your ${appointment.serviceType} service is complete. Please proceed with payment to finish.`;
+          break;
+        default:
+          notificationTitle = "Appointment Status Updated";
+          notificationMessage = `Your appointment status has been updated to ${status}.`;
+      }
+
+      // Send notification to the user
+      await createNotificationForAppointment(
+        appointment.userId,
+        notificationTitle,
+        notificationMessage,
+        "appointment",
+        appointment.appointmentId
+      );
+    }
 
     res.json({
       success: true,
@@ -314,11 +489,11 @@ export const updateAppointmentStatus = async (req, res) => {
 // ✅ Update appointment details (optional, if you want full update)
 export const updateAppointment = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { appointmentId } = req.params;
     const updates = req.body;
 
-    const appointment = await Appointment.findById(id);
-    
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
+
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -347,7 +522,7 @@ export const updateAppointment = async (req, res) => {
     });
 
     appointment.updatedAt = new Date();
-    
+
     await appointment.save();
 
     res.json({
@@ -362,6 +537,144 @@ export const updateAppointment = async (req, res) => {
       success: false,
       code: "DB_UPDATE_FAILED",
       message: errorMessages.DB_UPDATE_FAILED || "Failed to update appointment",
+      error: error.message,
+    });
+  }
+};
+
+
+// In your backend controller file, add this function:
+export const cancelAppointment = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { cancellationReason } = req.body;
+
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        code: "APPOINTMENT_NOT_FOUND",
+        message: errorMessages.APPOINTMENT_NOT_FOUND,
+      });
+    }
+
+    // Check if appointment can be cancelled
+    if (appointment.status === 'completed' || appointment.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: `Appointment is already ${appointment.status} and cannot be cancelled`
+      });
+    }
+
+    // Update appointment status
+    appointment.status = 'cancelled';
+    appointment.cancellationReason = cancellationReason || 'Cancelled by user';
+    appointment.cancelledAt = new Date();
+    appointment.updatedAt = new Date();
+
+    await appointment.save();
+
+    // Get io instance for WebSocket
+    const io = req.app.get('io');
+
+    // Emit WebSocket events
+    if (io) {
+      io.to(`user_${appointment.userId}`).emit('appointment_cancelled', {
+        appointmentId: appointment.appointmentId,
+        message: `Appointment cancelled successfully`
+      });
+
+      io.to('admin_room').emit('appointment_cancelled', {
+        appointmentId: appointment.appointmentId,
+        userId: appointment.userId,
+        message: `Appointment ${appointment.appointmentId} cancelled by user ${appointment.userId}`
+      });
+    }
+
+    // Create notification
+    await createNotificationForAppointment(
+      appointment.userId,
+      "Appointment Cancelled",
+      `Your ${appointment.serviceType} appointment for ${appointment.date} at ${appointment.time} has been cancelled.`,
+      "appointment",
+      appointment.appointmentId
+    );
+
+    res.json({
+      success: true,
+      message: "Appointment cancelled successfully",
+      appointment
+    });
+
+  } catch (error) {
+    console.error("CANCEL APPOINTMENT ERROR 👉", error);
+    res.status(500).json({
+      success: false,
+      code: "DB_UPDATE_FAILED",
+      message: errorMessages.DB_UPDATE_FAILED || "Failed to cancel appointment",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ Update bill items for an appointment
+export const updateBillItems = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { billItems } = req.body;
+
+    console.log("📝 UPDATE BILL ITEMS - Appointment ID:", appointmentId);
+    console.log("📝 UPDATE BILL ITEMS - Bill Items:", billItems);
+
+    if (!billItems || !Array.isArray(billItems)) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill items array is required"
+      });
+    }
+
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        code: "APPOINTMENT_NOT_FOUND",
+        message: errorMessages.APPOINTMENT_NOT_FOUND,
+      });
+    }
+
+    // Update bill items
+    appointment.billItems = billItems;
+    appointment.updatedAt = new Date();
+
+    await appointment.save();
+
+    console.log("✅ Bill items saved successfully for appointment:", appointmentId);
+
+    // Get io instance for WebSocket
+    const io = req.app.get('io');
+
+    // Emit WebSocket event for bill update
+    if (io) {
+      io.to(`user_${appointment.userId}`).emit('bill_updated', {
+        appointmentId: appointment.appointmentId,
+        message: `Bill has been updated for your appointment`
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Bill items updated successfully",
+      appointment
+    });
+
+  } catch (error) {
+    console.error("UPDATE BILL ITEMS ERROR 👉", error);
+    res.status(500).json({
+      success: false,
+      code: "DB_UPDATE_FAILED",
+      message: errorMessages.DB_UPDATE_FAILED || "Failed to update bill items",
       error: error.message,
     });
   }
