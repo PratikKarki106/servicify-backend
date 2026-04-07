@@ -15,7 +15,18 @@ const UserSchema = new mongoose.Schema(
     name: String,
     email: { type: String, required: true, unique: true },
     role: { type: String, enum: ["user", "admin"], default: "user" },
-    password: { type: String }
+    password: { type: String },
+    isVerified: { type: Boolean, default: false },
+    verificationToken: { type: String },
+    verificationExpires: { type: Date },
+    profilePicture: { type: String, default: null },
+    phone: { type: String, default: null },
+    address: {
+      street: { type: String, default: null },
+      city: { type: String, default: null },
+      state: { type: String, default: null },
+      zipCode: { type: String, default: null }
+    }
   },
   { timestamps: true }
 );
