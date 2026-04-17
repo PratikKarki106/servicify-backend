@@ -3,16 +3,20 @@ import Catalog from '../models/Catalog.js';
 // ✅ Create new catalog item
 export const createCatalogItem = async (req, res) => {
   try {
-    const { 
-      itemName, 
-      description, 
-      itemPrice, 
-      serviceCharge, 
-      estimatedTime, 
+    const {
+      companyId,
+      productId,
+      versionId,
+      ccId,
+      itemName,
+      description,
+      itemPrice,
+      serviceCharge,
+      estimatedTime,
     } = req.body;
 
     // Validate required fields
-    if (!itemName || !itemPrice || !serviceCharge || !estimatedTime) {
+    if (!companyId || !productId || !versionId || !ccId || !itemName || !itemPrice || !serviceCharge || !estimatedTime) {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields'
@@ -20,6 +24,10 @@ export const createCatalogItem = async (req, res) => {
     }
 
     const catalogItem = new Catalog({
+      companyId,
+      productId,
+      versionId,
+      ccId,
       itemName,
       description,
       itemPrice,
@@ -47,21 +55,25 @@ export const createCatalogItem = async (req, res) => {
 // ✅ Get all catalog items
 export const getAllCatalogItems = async (req, res) => {
   try {
-    const { 
-      sortBy = 'createdAt', 
+    const {
+      sortBy = 'createdAt',
       sortOrder = 'desc',
       page = 1,
       limit = 20
     } = req.query;
 
     const filter = { isActive: true };
-    
+
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const sort = {};
     sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
     const catalogItems = await Catalog.find(filter)
+      .populate('companyId', 'name')
+      .populate('productId', 'name')
+      .populate('versionId', 'name')
+      .populate('ccId', 'name')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
@@ -196,6 +208,10 @@ export const getUserCatalogItems = async (req, res) => {
     const filter = { isActive: true };
 
     const catalogItems = await Catalog.find(filter)
+      .populate('companyId', 'name')
+      .populate('productId', 'name')
+      .populate('versionId', 'name')
+      .populate('ccId', 'name')
       .sort({ createdAt: -1 })
       .select('-__v -isActive -updatedAt');
 

@@ -99,10 +99,58 @@ export async function getProfilePictureUrl(objectName) {
 // Delete profile picture
 export async function deleteProfilePicture(objectName) {
   const useMinio = await checkMinioAvailability();
-  
+
   if (!useMinio) {
     throw new Error('MinIO storage is not available');
   }
-  
+
+  await minioClient.removeObject(bucketName, objectName);
+}
+
+// Upload bluebook image
+export async function uploadBluebookImage(file, userId) {
+  const useMinio = await checkMinioAvailability();
+  const timestamp = Date.now();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  const objectName = `bluebooks/${userId}/${timestamp}_${file.originalname}`;
+
+  await minioClient.putObject(
+    bucketName,
+    objectName,
+    file.buffer,
+    file.size,
+    { 'Content-Type': file.mimetype }
+  );
+
+  return objectName;
+}
+
+// Generate a pre-signed URL for bluebook image (expires in 1 hour)
+export async function getBluebookImageUrl(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  return await minioClient.presignedGetObject(
+    bucketName,
+    objectName,
+    60 * 60
+  );
+}
+
+// Delete bluebook image
+export async function deleteBluebookImage(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
   await minioClient.removeObject(bucketName, objectName);
 }

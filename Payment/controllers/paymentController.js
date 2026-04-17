@@ -158,6 +158,19 @@ const initiatePayment = async (req, res) => {
                     error: 'Package not found'
                 });
             }
+
+            // Check if user has already purchased this package
+            const existingPurchase = await PackagePurchase.findOne({
+                userId: req.user._id,
+                packageId: itemIdObj
+            });
+
+            if (existingPurchase) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'You have already purchased this package. Each package can only be purchased once.'
+                });
+            }
         }
 
         // Get user info for customer_info (already fetched above)

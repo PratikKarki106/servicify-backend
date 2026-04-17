@@ -169,6 +169,7 @@ export const getUserPackages = async (req, res) => {
     // Format the response
     const userPackages = purchases.map(purchase => ({
       _id: purchase._id,
+      packageId: purchase.packageId ? purchase.packageId._id : null,
       packageName: purchase.packageName,
       totalCredits: purchase.totalCredits,
       usedCredits: purchase.usedCredits,

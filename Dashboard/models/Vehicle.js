@@ -31,6 +31,19 @@ const vehicleSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  bluebookImage: {
+    type: String,
+    default: null
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'verified', 'rejected'],
+    default: 'pending'
+  },
+  rejectionReason: {
+    type: String,
+    default: null
+  },
   lastService: {
     type: Date,
     default: Date.now
