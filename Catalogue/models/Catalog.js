@@ -57,6 +57,11 @@ const catalogSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  /** MinIO object key (e.g. catalog/items/...) — presigned URL is derived in API responses as imageUrl */
+  imageObjectKey: {
+    type: String,
+    default: ''
+  },
   isActive: {
     type: Boolean,
     default: true

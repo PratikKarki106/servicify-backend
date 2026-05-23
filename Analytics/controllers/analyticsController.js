@@ -1,87 +1,118 @@
 import Analytics from '../models/Analytics.js';
 import Appointment from '../../BookAppointment/models/Appointment.js';
+import PackagePurchase from '../../Payment/models/PackagePurchase.js';
+import Purchase from '../../Catalogue/models/Purchase.js';
+
+/**
+ * Calculate total amount for an appointment from bill items
+ */
+const calculateAppointmentTotal = (apt) => {
+  if (!apt.billItems || !apt.billItems.length) return 0;
+  return apt.billItems.reduce((sum, item) => {
+    return sum + (item.itemPrice || 0) + (item.serviceCharge || 0);
+  }, 0);
+};
 
 /**
  * Get date range based on timeFrame
  */
 const getDateRange = (timeFrame, customDateRange) => {
-  if (customDateRange?.startDate && customDateRange?.endDate) {
-    return {
-      startDate: new Date(customDateRange.startDate),
-      endDate: new Date(customDateRange.endDate)
-    };
-  }
-
   const endDate = new Date();
   let startDate = new Date();
 
-  if (timeFrame === 'weekly') {
-    // Get start of current week
-    const dayOfWeek = endDate.getDay();
+  if (timeFrame === 'daily') {
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+  } else if (timeFrame === 'weekly') {
+    // 1 Month of data for "Weekly" mode as requested
     startDate = new Date(endDate);
-    startDate.setDate(endDate.getDate() - dayOfWeek);
+    startDate.setMonth(endDate.getMonth() - 1);
     startDate.setHours(0, 0, 0, 0);
   } else if (timeFrame === 'monthly') {
-    // Get start of current month
-    startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+    // 12 Months of data for "Monthly" mode
+    startDate = new Date(endDate);
+    startDate.setFullYear(endDate.getFullYear() - 1);
+    startDate.setHours(0, 0, 0, 0);
   }
 
   return { startDate, endDate };
 };
 
 /**
- * Get weekly revenue data with comparison to last week
+ * Get weekly revenue data with comparison to last week.
+ * Always anchored on the current week's Sunday so days appear Sun–Sat.
  */
-export const getWeeklyRevenue = async (startDate, endDate) => {
+export const getWeeklyRevenue = async (_startDate, _endDate) => {
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const revenueData = [];
 
-  // Get current week data
+  // Anchor to THIS week's Sunday (Sun = 0)
+  const now = new Date();
+  const currentWeekSunday = new Date(now);
+  currentWeekSunday.setDate(now.getDate() - now.getDay()); // go back to Sunday
+  currentWeekSunday.setHours(0, 0, 0, 0);
+
+  // ── Current week (Sun → Sat) ──────────────────────────────────────────
   for (let i = 0; i < 7; i++) {
-    const dayStart = new Date(startDate);
-    dayStart.setDate(startDate.getDate() + i);
+    const dayStart = new Date(currentWeekSunday);
+    dayStart.setDate(currentWeekSunday.getDate() + i);
+    dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart);
     dayEnd.setHours(23, 59, 59, 999);
 
     const appointments = await Appointment.find({
-      appointmentDate: {
-        $gte: dayStart,
-        $lte: dayEnd
-      },
-      status: { $in: ['Completed', 'Confirmed', 'In Progress'] }
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      status: { $in: ['completed', 'confirmed', 'in-progress', 'payment'] }
     });
+    const apptRevenue = appointments.reduce((sum, apt) => sum + calculateAppointmentTotal(apt), 0);
 
-    const revenue = appointments.reduce((sum, apt) => sum + (apt.totalAmount || 0), 0);
+    const packagePurchases = await PackagePurchase.find({
+      purchasedAt: { $gte: dayStart, $lte: dayEnd }
+    });
+    const pkgRevenue = packagePurchases.reduce((sum, pkg) => sum + (pkg.amount || 0), 0);
+
+    const itemPurchases = await Purchase.find({
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      paymentStatus: 'completed'
+    });
+    const itemRevenue = itemPurchases.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+
     revenueData.push({
-      day: days[dayStart.getDay()],
-      revenue: Math.round(revenue)
+      day: days[i],               // i already maps to Sun(0)..Sat(6)
+      revenue: Math.round(apptRevenue + pkgRevenue + itemRevenue)
     });
   }
 
-  // Get last week data for comparison
-  const lastWeekStart = new Date(startDate);
-  lastWeekStart.setDate(startDate.getDate() - 7);
-  const lastWeekEnd = new Date(endDate);
-  lastWeekEnd.setDate(endDate.getDate() - 7);
+  // ── Previous week (same Sun → Sat, shifted −7 days) ───────────────────
+  const lastWeekSunday = new Date(currentWeekSunday);
+  lastWeekSunday.setDate(currentWeekSunday.getDate() - 7);
 
   for (let i = 0; i < 7; i++) {
-    const dayStart = new Date(lastWeekStart);
-    dayStart.setDate(lastWeekStart.getDate() + i);
+    const dayStart = new Date(lastWeekSunday);
+    dayStart.setDate(lastWeekSunday.getDate() + i);
+    dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart);
     dayEnd.setHours(23, 59, 59, 999);
 
     const appointments = await Appointment.find({
-      appointmentDate: {
-        $gte: dayStart,
-        $lte: dayEnd
-      },
-      status: { $in: ['Completed', 'Confirmed', 'In Progress'] }
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      status: { $in: ['completed', 'confirmed', 'in-progress', 'payment'] }
     });
+    const apptRevenue = appointments.reduce((sum, apt) => sum + calculateAppointmentTotal(apt), 0);
 
-    const revenue = appointments.reduce((sum, apt) => sum + (apt.totalAmount || 0), 0);
-    
+    const packagePurchases = await PackagePurchase.find({
+      purchasedAt: { $gte: dayStart, $lte: dayEnd }
+    });
+    const pkgRevenue = packagePurchases.reduce((sum, pkg) => sum + (pkg.amount || 0), 0);
+
+    const itemPurchases = await Purchase.find({
+      createdAt: { $gte: dayStart, $lte: dayEnd },
+      paymentStatus: 'completed'
+    });
+    const itemRevenue = itemPurchases.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+
     if (revenueData[i]) {
-      revenueData[i].lastWeek = Math.round(revenue);
+      revenueData[i].lastWeek = Math.round(apptRevenue + pkgRevenue + itemRevenue);
     }
   }
 
@@ -95,29 +126,36 @@ export const getMonthlyRevenue = async (startDate, endDate) => {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const revenueData = [];
 
-  // Generate data for the past 12 months
-  for (let i = 11; i >= 0; i--) {
-    const monthDate = new Date(endDate.getFullYear(), endDate.getMonth() - i, 1);
-    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
+  // If monthly timeframe, generate for the whole calendar year of the endDate
+  const targetYear = endDate.getFullYear();
+  
+  for (let m = 0; m < 12; m++) {
+    const monthStart = new Date(targetYear, m, 1);
+    const monthEnd = new Date(targetYear, m + 1, 0, 23, 59, 59, 999);
 
-    // Only include months within the requested range
-    if (monthStart >= startDate && monthStart <= endDate) {
-      const appointments = await Appointment.find({
-        appointmentDate: {
-          $gte: monthStart,
-          $lte: monthEnd
-        },
-        status: { $in: ['Completed', 'Confirmed', 'In Progress'] }
-      });
+    const appointments = await Appointment.find({
+      createdAt: { $gte: monthStart, $lte: monthEnd },
+      status: { $in: ['completed', 'confirmed', 'in-progress', 'payment'] }
+    });
+    const apptRevenue = appointments.reduce((sum, apt) => sum + calculateAppointmentTotal(apt), 0);
 
-      const revenue = appointments.reduce((sum, apt) => sum + (apt.totalAmount || 0), 0);
-      
-      revenueData.push({
-        month: months[monthDate.getMonth()],
-        revenue: Math.round(revenue)
-      });
-    }
+    const packagePurchases = await PackagePurchase.find({
+      purchasedAt: { $gte: monthStart, $lte: monthEnd }
+    });
+    const pkgRevenue = packagePurchases.reduce((sum, pkg) => sum + (pkg.amount || 0), 0);
+
+    const itemPurchases = await Purchase.find({
+      createdAt: { $gte: monthStart, $lte: monthEnd },
+      paymentStatus: 'completed'
+    });
+    const itemRevenue = itemPurchases.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+
+    const revenue = apptRevenue + pkgRevenue + itemRevenue;
+    
+    revenueData.push({
+      month: months[m],
+      revenue: Math.round(revenue)
+    });
   }
 
   return revenueData;
@@ -127,13 +165,13 @@ export const getMonthlyRevenue = async (startDate, endDate) => {
  * Get status distribution data
  */
 export const getStatusDistribution = async (startDate, endDate) => {
-  const statuses = ['Completed', 'In Progress', 'Pending', 'Cancelled', 'Confirmed'];
+  const statuses = ['booked', 'confirmed', 'in-progress', 'payment', 'completed', 'cancelled'];
   const distribution = [];
 
   for (const status of statuses) {
     const count = await Appointment.countDocuments({
       status,
-      appointmentDate: {
+      createdAt: {
         $gte: startDate,
         $lte: endDate
       }
@@ -151,20 +189,24 @@ export const getStatusDistribution = async (startDate, endDate) => {
  * Get service type breakdown
  */
 export const getServiceTypeBreakdown = async (startDate, endDate) => {
-  const serviceTypes = ['Servicing', 'Repair', 'Checkup', 'Wash'];
+  const serviceTypes = ['servicing', 'repair', 'checkup', 'wash'];
   const breakdown = [];
 
   for (const serviceType of serviceTypes) {
     const count = await Appointment.countDocuments({
       serviceType,
-      appointmentDate: {
+      createdAt: {
         $gte: startDate,
         $lte: endDate
       }
     });
 
     if (count > 0) {
-      breakdown.push({ name: serviceType, count });
+      let displayName = serviceType.charAt(0).toUpperCase() + serviceType.slice(1);
+      if (serviceType === 'checkup') {
+        displayName = 'Check up';
+      }
+      breakdown.push({ name: displayName, count });
     }
   }
 
@@ -174,30 +216,60 @@ export const getServiceTypeBreakdown = async (startDate, endDate) => {
 /**
  * Get appointments trend (weekly)
  */
-export const getAppointmentsTrend = async (startDate, endDate) => {
+export const getAppointmentsTrend = async (startDate, endDate, timeFrame = 'weekly') => {
   const trend = [];
-  const weeks = 8; // Show last 8 weeks
 
-  for (let i = weeks - 1; i >= 0; i--) {
-    const weekStart = new Date(startDate);
-    weekStart.setDate(startDate.getDate() - (i * 7));
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
+  if (timeFrame === 'daily') {
+    // Show 7 days: Sun Mon Tue Wed Thu Fri Sat
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    // Assuming Sunday start of current week
+    const currentDay = new Date();
+    const dayOfWeek = currentDay.getDay();
+    const weekStart = new Date(currentDay);
+    weekStart.setDate(currentDay.getDate() - dayOfWeek);
+    weekStart.setHours(0, 0, 0, 0);
 
-    // Only count weeks within range
-    if (weekEnd <= endDate) {
+    for (let i = 0; i < 7; i++) {
+      const dStart = new Date(weekStart);
+      dStart.setDate(weekStart.getDate() + i);
+      const dEnd = new Date(dStart);
+      dEnd.setHours(23, 59, 59, 999);
+
       const count = await Appointment.countDocuments({
-        appointmentDate: {
-          $gte: weekStart,
-          $lte: weekEnd
-        }
+        createdAt: { $gte: dStart, $lte: dEnd }
       });
 
-      trend.push({
-        week: `W${weeks - i}`,
-        count
+      trend.push({ day: days[i], count });
+    }
+  } else if (timeFrame === 'weekly') {
+    // Show 4 weeks: Week 1 to Week 4 of the last month
+    for (let i = 0; i < 4; i++) {
+      const wStart = new Date(startDate);
+      wStart.setDate(startDate.getDate() + (i * 7));
+      const wEnd = new Date(wStart);
+      wEnd.setDate(wStart.getDate() + 6);
+      wEnd.setHours(23, 59, 59, 999);
+
+      const count = await Appointment.countDocuments({
+        createdAt: { $gte: wStart, $lte: wEnd }
       });
+
+      trend.push({ week: `Week ${i + 1}`, count });
+    }
+  } else if (timeFrame === 'monthly') {
+    // Show 12 months: Jan to Dec
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+
+    for (let m = 0; m < 12; m++) {
+      const mStart = new Date(currentYear, m, 1);
+      const mEnd = new Date(currentYear, m + 1, 0, 23, 59, 59, 999);
+
+      const count = await Appointment.countDocuments({
+        createdAt: { $gte: mStart, $lte: mEnd }
+      });
+
+      trend.push({ month: months[m], count });
     }
   }
 
@@ -208,32 +280,46 @@ export const getAppointmentsTrend = async (startDate, endDate) => {
  * Get KPI metrics
  */
 export const getKpiMetrics = async (startDate, endDate) => {
-  // Get total revenue
-  const appointments = await Appointment.find({
-    appointmentDate: {
-      $gte: startDate,
-      $lte: endDate
-    },
-    status: { $in: ['Completed', 'Confirmed', 'In Progress'] }
-  });
+  const appointmentsQuery = {
+    createdAt: { $gte: startDate, $lte: endDate }
+  };
 
-  const totalRevenue = appointments.reduce((sum, apt) => sum + (apt.totalAmount || 0), 0);
+  const appointments = await Appointment.find({
+    ...appointmentsQuery,
+    status: { $in: ['completed', 'confirmed', 'in-progress', 'payment'] }
+  });
+  const apptRevenue = appointments.reduce((sum, apt) => sum + calculateAppointmentTotal(apt), 0);
+
+  const packagePurchases = await PackagePurchase.find({
+    purchasedAt: { $gte: startDate, $lte: endDate }
+  });
+  const pkgRevenue = packagePurchases.reduce((sum, pkg) => sum + (pkg.amount || 0), 0);
+
+  const itemPurchases = await Purchase.find({
+    createdAt: { $gte: startDate, $lte: endDate },
+    paymentStatus: 'completed'
+  });
+  const itemRevenue = itemPurchases.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+
+  const totalRevenue = apptRevenue + pkgRevenue + itemRevenue;
 
   // Get total appointments
   const totalAppointments = await Appointment.countDocuments({
-    appointmentDate: {
-      $gte: startDate,
-      $lte: endDate
-    }
+    createdAt: { $gte: startDate, $lte: endDate }
   });
 
   // Get completed appointments
   const completedAppointments = await Appointment.countDocuments({
-    status: 'Completed',
-    appointmentDate: {
-      $gte: startDate,
-      $lte: endDate
-    }
+    createdAt: { $gte: startDate, $lte: endDate },
+    status: 'completed'
+  });
+
+  // Get remaining services (pending work)
+  // All-time or within range? User said "remaining services to show the pending work"
+  // Usually pending work is an absolute value (all-time pending) but lets filter by range if provided 
+  // or better, show all appointments that are not completed/cancelled.
+  const remainingServices = await Appointment.countDocuments({
+    status: { $in: ['booked', 'confirmed', 'in-progress', 'payment'] }
   });
 
   // Calculate completion rate
@@ -242,14 +328,15 @@ export const getKpiMetrics = async (startDate, endDate) => {
     : 0;
 
   // Calculate average daily services
-  const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-  const avgDailyServices = daysDiff > 0 ? Math.round(totalAppointments / daysDiff) : 0;
+  const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) || 1;
+  const avgDailyServices = Math.round(totalAppointments / daysDiff);
 
   return {
     totalRevenue: Math.round(totalRevenue),
     totalAppointments,
     completionRate,
-    avgDailyServices
+    avgDailyServices,
+    remainingServices
   };
 };
 
@@ -272,7 +359,7 @@ export const getAnalyticsDashboard = async (req, res) => {
         : getMonthlyRevenue(startDate, endDate),
       getStatusDistribution(startDate, endDate),
       getServiceTypeBreakdown(startDate, endDate),
-      getAppointmentsTrend(startDate, endDate),
+      getAppointmentsTrend(startDate, endDate, timeFrame),
       getKpiMetrics(startDate, endDate)
     ]);
 

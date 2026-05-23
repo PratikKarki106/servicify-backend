@@ -11,7 +11,7 @@ const paymentSchema = new mongoose.Schema({
     // What type of payment
     paymentType: {
         type: String,
-        enum: ['appointment', 'package'],
+        enum: ['appointment', 'package', 'purchase'],
         required: true
     },
 
@@ -34,6 +34,10 @@ const paymentSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'PackagePurchase'
     },
+    purchaseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Purchase'
+    },
 
     // Khalti specific fields
     khaltiPidx: {
@@ -42,6 +46,25 @@ const paymentSchema = new mongoose.Schema({
         sparse: true  // Allows null values but ensures uniqueness if provided
     },
     khaltiTransactionId: String,
+    
+    // eSewa specific fields
+    esewaBookingId: String,
+    esewaCorrelationId: String,
+    esewaReferenceCode: String,
+    esewaStatus: String,
+    esewaTransactionUuid: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    
+    // Payment gateway
+    gateway: {
+        type: String,
+        enum: ['khalti', 'esewa'],
+        default: 'khalti'
+    },
+    
     purchaseOrderId: {
         type: String,
         required: true,
@@ -65,6 +88,7 @@ const paymentSchema = new mongoose.Schema({
         default: 'initiated'
     },
     khaltiStatus: String,  // Raw status from Khalti
+    gatewayStatus: String,  // Generic gateway status
 
     // Timestamps
     initiatedAt: {
@@ -82,8 +106,6 @@ const paymentSchema = new mongoose.Schema({
 
 // Index for faster queries
 paymentSchema.index({ userId: 1, paymentStatus: 1 });
-paymentSchema.index({ khaltiPidx: 1 });
-paymentSchema.index({ purchaseOrderId: 1 });
 paymentSchema.index({ appointmentId: 1 });  // Index for appointment lookups
 
 export default mongoose.model('Payment', paymentSchema);

@@ -6,24 +6,31 @@ import PackagePurchase from '../../Payment/models/PackagePurchase.js';
  * Get date range based on timeFrame
  */
 const getDateRange = (timeFrame, customDateRange) => {
+  const now = new Date();
+  let startDate = new Date(now);
+  let endDate = new Date(now);
+
   if (customDateRange?.startDate && customDateRange?.endDate) {
-    return {
-      startDate: new Date(customDateRange.startDate),
-      endDate: new Date(customDateRange.endDate)
-    };
+    startDate = new Date(customDateRange.startDate);
+    endDate = new Date(customDateRange.endDate);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+    return { startDate, endDate };
   }
 
-  const endDate = new Date();
-  let startDate = new Date();
-
   if (timeFrame === 'weekly') {
-    const dayOfWeek = endDate.getDay();
-    startDate = new Date(endDate);
-    startDate.setDate(endDate.getDate() - dayOfWeek);
+    const dayOfWeek = now.getDay();
+    startDate = new Date(now);
+    startDate.setDate(now.getDate() - dayOfWeek);
     startDate.setHours(0, 0, 0, 0);
+
+    endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + 6);
+    endDate.setHours(23, 59, 59, 999);
   } else if (timeFrame === 'monthly') {
-    startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 1, 1);
-    endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 0, 23, 59, 59, 999);
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
   }
 
   return { startDate, endDate };
@@ -36,16 +43,11 @@ export const getUserWeeklySpending = async (userId, userObjectId, startDate, end
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const spendingData = [];
 
-  console.log('[Weekly Spending] userId:', userId, 'userObjectId:', userObjectId);
-  console.log('[Weekly Spending] Date range:', startDate, 'to', endDate);
-
   for (let i = 0; i < 7; i++) {
     const dayStart = new Date(startDate);
     dayStart.setDate(startDate.getDate() + i);
     const dayEnd = new Date(dayStart);
     dayEnd.setHours(23, 59, 59, 999);
-
-    console.log(`[Weekly Spending] Querying day ${i}: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
 
     // Get appointment spending from completed payments
     const appointmentPayments = await Payment.find({
@@ -57,11 +59,6 @@ export const getUserWeeklySpending = async (userId, userObjectId, startDate, end
         $lte: dayEnd
       }
     });
-
-    console.log(`[Weekly Spending] Day ${i} (${days[dayStart.getDay()]}): Found ${appointmentPayments.length} appointment payments`);
-    if (appointmentPayments.length > 0) {
-      console.log(`[Weekly Spending] Day ${i} payments:`, appointmentPayments.map(p => ({ id: p._id, amount: p.amount, createdAt: p.createdAt })));
-    }
 
     const appointmentAmount = appointmentPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
@@ -76,16 +73,27 @@ export const getUserWeeklySpending = async (userId, userObjectId, startDate, end
       }
     });
 
-    console.log(`[Weekly Spending] Day ${i} (${days[dayStart.getDay()]}): Found ${packagePayments.length} package payments`);
     const packageAmount = packagePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    // Get catalog purchase spending from completed payments
+    const purchasePayments = await Payment.find({
+      userId: userObjectId,
+      paymentType: 'purchase',
+      paymentStatus: 'completed',
+      createdAt: {
+        $gte: dayStart,
+        $lte: dayEnd
+      }
+    });
+
+    const purchaseAmount = purchasePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
     spendingData.push({
       day: days[dayStart.getDay()],
-      amount: Math.round(appointmentAmount + packageAmount)
+      amount: Math.round(appointmentAmount + packageAmount + purchaseAmount)
     });
   }
 
-  console.log('[Weekly Spending] Final spending data:', spendingData);
   return spendingData;
 };
 
@@ -96,11 +104,10 @@ export const getUserMonthlySpending = async (userId, userObjectId, startDate, en
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const spendingData = [];
 
-  const currentMonth = endDate.getMonth();
-  for (let i = 5; i >= 0; i--) {
-    const monthDate = new Date(endDate.getFullYear(), currentMonth - i, 1);
-    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
+  const targetYear = endDate.getFullYear();
+  for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+    const monthStart = new Date(targetYear, monthIndex, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(targetYear, monthIndex + 1, 0, 23, 59, 59, 999);
 
     // Get appointment spending from completed payments
     const appointmentPayments = await Payment.find({
@@ -128,9 +135,22 @@ export const getUserMonthlySpending = async (userId, userObjectId, startDate, en
 
     const packageAmount = packagePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
+    // Get catalog purchase spending from completed payments
+    const purchasePayments = await Payment.find({
+      userId: userObjectId,
+      paymentType: 'purchase',
+      paymentStatus: 'completed',
+      createdAt: {
+        $gte: monthStart,
+        $lte: monthEnd
+      }
+    });
+
+    const purchaseAmount = purchasePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
     spendingData.push({
-      month: months[monthDate.getMonth()],
-      amount: Math.round(appointmentAmount + packageAmount)
+      month: months[monthIndex],
+      amount: Math.round(appointmentAmount + packageAmount + purchaseAmount)
     });
   }
 
@@ -140,7 +160,7 @@ export const getUserMonthlySpending = async (userId, userObjectId, startDate, en
 /**
  * Get user service usage breakdown
  */
-export const getUserServiceUsage = async (userId, startDate, endDate) => {
+export const getUserServiceUsage = async (userId, userObjectId, startDate, endDate) => {
   const serviceTypes = ['servicing', 'repair', 'checkup', 'wash'];
   const colors = {
     'servicing': '#8b5cf6',
@@ -170,13 +190,32 @@ export const getUserServiceUsage = async (userId, startDate, endDate) => {
     }
   }
 
+  // Get purchase count
+  const purchaseCount = await Payment.countDocuments({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: {
+      $gte: startDate,
+      $lte: endDate
+    }
+  });
+
+  if (purchaseCount > 0) {
+    breakdown.push({
+      name: 'Purchases',
+      count: purchaseCount,
+      color: '#ec4899'
+    });
+  }
+
   return breakdown;
 };
 
 /**
  * Get monthly comparison data (this month vs last month)
  */
-export const getMonthlyComparison = async (userId, endDate) => {
+export const getMonthlyComparison = async (userId, userObjectId, endDate) => {
   const currentMonthStart = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
   const currentMonthEnd = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0, 23, 59, 59, 999);
   const lastMonthStart = new Date(endDate.getFullYear(), endDate.getMonth() - 1, 1);
@@ -211,6 +250,35 @@ export const getMonthlyComparison = async (userId, endDate) => {
         lastMonth: lastMonthCount
       });
     }
+  }
+
+  // Compare purchases
+  const currentPurchaseCount = await Payment.countDocuments({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: {
+      $gte: currentMonthStart,
+      $lte: currentMonthEnd
+    }
+  });
+
+  const lastPurchaseCount = await Payment.countDocuments({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: {
+      $gte: lastMonthStart,
+      $lte: lastMonthEnd
+    }
+  });
+
+  if (currentPurchaseCount > 0 || lastPurchaseCount > 0) {
+    comparison.push({
+      category: 'Purchases',
+      thisMonth: currentPurchaseCount,
+      lastMonth: lastPurchaseCount
+    });
   }
 
   return comparison;
@@ -259,6 +327,26 @@ export const getServiceCategories = async (userId, userObjectId, startDate, endD
         totalAmount: Math.round(totalAmount)
       });
     }
+  }
+
+  // Add Purchases category
+  const purchasePayments = await Payment.find({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: {
+      $gte: startDate,
+      $lte: endDate
+    }
+  });
+
+  if (purchasePayments.length > 0) {
+    const purchaseAmount = purchasePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    categories.push({
+      name: 'Purchases',
+      count: purchasePayments.length,
+      totalAmount: Math.round(purchaseAmount)
+    });
   }
 
   return categories;
@@ -321,13 +409,31 @@ export const getActivityRadar = async (userId, userObjectId, startDate, endDate,
 
   const packagePayments = await Payment.find(packagePaymentQuery);
   const packageAmount = packagePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalAmount = appointmentAmount + packageAmount;
+
+  // Get purchase spending
+  const purchasePaymentQuery = allTime
+    ? {
+        userId: userObjectId,
+        paymentType: 'purchase',
+        paymentStatus: 'completed'
+      }
+    : {
+        userId: userObjectId,
+        paymentType: 'purchase',
+        paymentStatus: 'completed',
+        createdAt: {
+          $gte: startDate,
+          $lte: endDate
+        }
+      };
+
+  const purchasePayments = await Payment.find(purchasePaymentQuery);
+  const purchaseAmount = purchasePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const totalAmount = appointmentAmount + packageAmount + purchaseAmount;
 
   const completedCount = appointments.filter(apt => apt.status === 'completed').length;
   const satisfactionScore = totalServices > 0 ? Math.round((completedCount / totalServices) * 100) : 0;
-
-  console.log('[Activity Radar] totalServices:', totalServices, 'completedCount:', completedCount, 'totalAmount:', totalAmount);
-  console.log('[Activity Radar] satisfactionScore:', satisfactionScore);
 
   return [
     { dimension: 'Services', value: Math.min(totalServices * 10, 100) },
@@ -401,6 +507,29 @@ export const getSpendingComparison = async (userId, userObjectId, endDate) => {
     (sum, p) => sum + (p.amount || 0), 0
   );
 
+  // Get purchase spending for current week
+  const currentWeekPurchasePayments = await Payment.find({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: { $gte: currentWeekStart, $lte: endDate }
+  });
+
+  const currentWeekPurchaseSpending = currentWeekPurchasePayments.reduce(
+    (sum, p) => sum + (p.amount || 0), 0
+  );
+
+  const lastWeekPurchasePayments = await Payment.find({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: { $gte: lastWeekStart, $lte: lastWeekEnd }
+  });
+
+  const lastWeekPurchaseSpending = lastWeekPurchasePayments.reduce(
+    (sum, p) => sum + (p.amount || 0), 0
+  );
+
   // Monthly comparison (this month vs last month)
   const currentMonthStart = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
   const lastMonthStart = new Date(endDate.getFullYear(), endDate.getMonth() - 1, 1);
@@ -454,14 +583,37 @@ export const getSpendingComparison = async (userId, userObjectId, endDate) => {
     (sum, p) => sum + (p.amount || 0), 0
   );
 
+  // Get purchase spending for current month
+  const currentMonthPurchasePayments = await Payment.find({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: { $gte: currentMonthStart, $lte: endDate }
+  });
+
+  const currentMonthPurchaseSpending = currentMonthPurchasePayments.reduce(
+    (sum, p) => sum + (p.amount || 0), 0
+  );
+
+  const lastMonthPurchasePayments = await Payment.find({
+    userId: userObjectId,
+    paymentType: 'purchase',
+    paymentStatus: 'completed',
+    createdAt: { $gte: lastMonthStart, $lte: lastMonthEnd }
+  });
+
+  const lastMonthPurchaseSpending = lastMonthPurchasePayments.reduce(
+    (sum, p) => sum + (p.amount || 0), 0
+  );
+
   return {
     weekly: {
-      current: Math.round(currentWeekAppointmentSpending + currentWeekPackageSpending),
-      previous: Math.round(lastWeekAppointmentSpending + lastWeekPackageSpending)
+      current: Math.round(currentWeekAppointmentSpending + currentWeekPackageSpending + currentWeekPurchaseSpending),
+      previous: Math.round(lastWeekAppointmentSpending + lastWeekPackageSpending + lastWeekPurchaseSpending)
     },
     monthly: {
-      current: Math.round(currentMonthAppointmentSpending + currentMonthPackageSpending),
-      previous: Math.round(lastMonthAppointmentSpending + lastMonthPackageSpending)
+      current: Math.round(currentMonthAppointmentSpending + currentMonthPackageSpending + currentMonthPurchaseSpending),
+      previous: Math.round(lastMonthAppointmentSpending + lastMonthPackageSpending + lastMonthPurchaseSpending)
     }
   };
 };
@@ -542,7 +694,28 @@ export const getUserKpiMetrics = async (userId, userObjectId, startDate, endDate
 
   const packagePayments = await Payment.find(packageQuery);
   const packageSpent = packagePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalSpent = appointmentSpent + packageSpent;
+
+  // Get purchase spending from completed payments
+  const purchaseQuery = allTime
+    ? {
+        userId: userObjectId,
+        paymentType: 'purchase',
+        paymentStatus: 'completed'
+      }
+    : {
+        userId: userObjectId,
+        paymentType: 'purchase',
+        paymentStatus: 'completed',
+        createdAt: {
+          $gte: startDate,
+          $lte: endDate
+        }
+      };
+
+  const purchasePayments = await Payment.find(purchaseQuery);
+  const purchaseSpent = purchasePayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const totalSpent = appointmentSpent + packageSpent + purchaseSpent;
 
   // Calculate spending trend (compare with previous period) - only for date-filtered data
   let spendingTrend = 'stable';
@@ -582,7 +755,22 @@ export const getUserKpiMetrics = async (userId, userObjectId, startDate, endDate
       (sum, p) => sum + (p.amount || 0), 0
     );
 
-    const previousTotalSpent = previousAppointmentSpending + previousPackageSpending;
+    // Get previous period purchase spending
+    const previousPurchasePayments = await Payment.find({
+      userId: userObjectId,
+      paymentType: 'purchase',
+      paymentStatus: 'completed',
+      createdAt: {
+        $gte: previousPeriodStart,
+        $lt: startDate
+      }
+    });
+
+    const previousPurchaseSpending = previousPurchasePayments.reduce(
+      (sum, p) => sum + (p.amount || 0), 0
+    );
+
+    const previousTotalSpent = previousAppointmentSpending + previousPackageSpending + previousPurchaseSpending;
 
     // Get previous period appointments for service trend comparison
     const previousAppointments = await Appointment.find({
@@ -621,23 +809,16 @@ export const getUserKpiMetrics = async (userId, userObjectId, startDate, endDate
  */
 export const getUserAnalyticsDashboard = async (req, res) => {
   try {
-    console.log('[User Analytics] Starting dashboard fetch...');
     const { timeFrame = 'weekly', startDate: customStart, endDate: customEnd } = req.query;
     const userId = req.user.userId; // Numeric userId for Appointment queries
     const userObjectId = req.user._id; // ObjectId for Payment/PackagePurchase queries
-
-    console.log('[User Analytics] userId:', userId, 'userObjectId:', userObjectId);
-    console.log('[User Analytics] timeFrame:', timeFrame);
 
     const { startDate, endDate } = getDateRange(timeFrame, {
       startDate: customStart,
       endDate: customEnd
     });
 
-    console.log('[User Analytics] Date range:', startDate, 'to', endDate);
-
     // Fetch all data in parallel
-    console.log('[User Analytics] Fetching data in parallel...');
     const [
       spendingHistory,
       serviceUsage,
@@ -651,19 +832,14 @@ export const getUserAnalyticsDashboard = async (req, res) => {
       timeFrame === 'weekly'
         ? getUserWeeklySpending(userId, userObjectId, startDate, endDate)
         : getUserMonthlySpending(userId, userObjectId, startDate, endDate),
-      getUserServiceUsage(userId, startDate, endDate),
-      getMonthlyComparison(userId, endDate),
+      getUserServiceUsage(userId, userObjectId, startDate, endDate),
+      getMonthlyComparison(userId, userObjectId, endDate),
       getServiceCategories(userId, userObjectId, startDate, endDate),
       getActivityRadar(userId, userObjectId, startDate, endDate, true), // allTime=true for activity radar
       getSpendingComparison(userId, userObjectId, endDate),
       getQuickStats(userId),
       getUserKpiMetrics(userId, userObjectId, startDate, endDate, true) // allTime=true for KPI metrics
     ]);
-
-    console.log('[User Analytics] All data fetched successfully');
-    console.log('[User Analytics] spendingHistory length:', spendingHistory.length);
-    console.log('[User Analytics] spendingHistory:', JSON.stringify(spendingHistory, null, 2));
-    console.log('[User Analytics] Sending response with spendingHistory:', spendingHistory.map(s => `${s.day || s.month}: Rs.${s.amount}`).join(', '));
 
     res.json({
       spendingHistory,
@@ -677,7 +853,6 @@ export const getUserAnalyticsDashboard = async (req, res) => {
     });
   } catch (error) {
     console.error('[User Analytics Controller] Error:', error);
-    console.error('[User Analytics Controller] Stack:', error.stack);
     res.status(500).json({
       message: 'Failed to fetch user analytics data',
       error: error.message
@@ -719,6 +894,7 @@ export const getUserSpendingData = async (req, res) => {
 export const getUserServiceUsageController = async (req, res) => {
   try {
     const userId = req.user.userId;
+    const userObjectId = req.user._id;
     const { startDate: customStart, endDate: customEnd } = req.query;
     
     const { startDate, endDate } = getDateRange('monthly', {
@@ -726,7 +902,7 @@ export const getUserServiceUsageController = async (req, res) => {
       endDate: customEnd
     });
 
-    const serviceUsage = await getUserServiceUsage(userId, startDate, endDate);
+    const serviceUsage = await getUserServiceUsage(userId, userObjectId, startDate, endDate);
     res.json(serviceUsage);
   } catch (error) {
     console.error('[User Analytics Controller] Error:', error);

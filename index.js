@@ -28,6 +28,8 @@ import paymentRoutes from "./Payment/Routes/paymentRoutes.js";
 import analyticsRoutes from "./Analytics/routes/analyticsRoutes.js";
 import userAnalyticsRoutes from "./Analytics/routes/userAnalyticsRoutes.js";
 import historyRoutes from "./History/routes/historyRoutes.js";
+import loyaltyRoutes from "./Loyalty/routes/loyaltyRoutes.js";
+import cartPurchaseRoutes from "./Catalogue/routes/cartPurchaseRoutes.js";
 import http from "http";
 import setupWebSocket from "./Sockets/index.js"; // 👈 Import our organized socket setup
 
@@ -36,7 +38,7 @@ const server = http.createServer(app);
 
 const allowedOrigins = [
   process.env.CLIENT_URL,
-  "http://192.168.254.1:5173",
+  "http://192.168.254.9:5173",
   "http://localhost:5173",
 ];
 
@@ -50,7 +52,9 @@ app.use(cors({
     }
     return callback(null, true);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Add PATCH and OPTIONS
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-User-Id'] 
 }));
 
 app.use(express.json());
@@ -92,6 +96,8 @@ app.use("/admin/users", adminUserRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/analytics/user", userAnalyticsRoutes);
 app.use("/api/history", historyRoutes);
+app.use("/api/loyalty", loyaltyRoutes);
+app.use("/api", cartPurchaseRoutes);
 
 app.get("/", (req, res) => {
   res.send("Servicify backend is running!");
@@ -102,5 +108,5 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📡 Network access: http://192.168.254.1:${PORT}`);
+  console.log(`📡 Network access: http://192.168.254.9:${PORT}`);
 });

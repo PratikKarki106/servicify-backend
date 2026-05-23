@@ -1,5 +1,12 @@
 import Vehicle from '../models/Vehicle.js';
-import { uploadBluebookImage, getBluebookImageUrl, deleteBluebookImage } from '../../services/minio.js';
+import { 
+  uploadBluebookImage, 
+  getBluebookImageUrl, 
+  deleteBluebookImage,
+  uploadVehicleImage,
+  getVehicleImageUrl,
+  deleteVehicleImage
+} from '../../services/minio.js';
 import User from '../../Users/models/User.js';
 
 // Get all vehicles for current user
@@ -28,8 +35,16 @@ export const getVehicles = async (req, res) => {
           try {
             vehicleObj.bluebookImageUrl = await getBluebookImageUrl(vehicleObj.bluebookImage);
           } catch (error) {
-            console.error('Error generating image URL:', error);
+            console.error('Error generating bluebook URL:', error);
             vehicleObj.bluebookImageUrl = null;
+          }
+        }
+        if (vehicleObj.vehicleImage) {
+          try {
+            vehicleObj.vehicleImageUrl = await getVehicleImageUrl(vehicleObj.vehicleImage);
+          } catch (error) {
+            console.error('Error generating vehicle URL:', error);
+            vehicleObj.vehicleImageUrl = null;
           }
         }
         return vehicleObj;
@@ -81,8 +96,16 @@ export const getVehicle = async (req, res) => {
       try {
         vehicleObj.bluebookImageUrl = await getBluebookImageUrl(vehicleObj.bluebookImage);
       } catch (error) {
-        console.error('Error generating image URL:', error);
+        console.error('Error generating bluebook URL:', error);
         vehicleObj.bluebookImageUrl = null;
+      }
+    }
+    if (vehicleObj.vehicleImage) {
+      try {
+        vehicleObj.vehicleImageUrl = await getVehicleImageUrl(vehicleObj.vehicleImage);
+      } catch (error) {
+        console.error('Error generating vehicle URL:', error);
+        vehicleObj.vehicleImageUrl = null;
       }
     }
 
@@ -126,15 +149,33 @@ export const addVehicle = async (req, res) => {
 
     // Upload bluebook image if provided
     let bluebookImagePath = null;
-    if (req.file) {
+    if (req.files && req.files['image']) {
       try {
-        bluebookImagePath = await uploadBluebookImage(req.file, userId);
+        bluebookImagePath = await uploadBluebookImage(req.files['image'][0], userId);
         console.log('Bluebook image uploaded to MinIO:', bluebookImagePath);
       } catch (error) {
         console.error('Error uploading bluebook image:', error);
         return res.status(500).json({
           success: false,
           message: 'Error uploading bluebook image',
+          error: error.message
+        });
+      }
+    }
+
+    // Upload vehicle image if provided
+    let vehicleImagePath = null;
+    if (req.files && req.files['optionalImage']) {
+      try {
+        vehicleImagePath = await uploadVehicleImage(req.files['optionalImage'][0], userId);
+        console.log('Vehicle image uploaded to MinIO:', vehicleImagePath);
+      } catch (error) {
+        console.error('Error uploading vehicle image:', error);
+        // We don't necessarily want to fail the whole request if the optional image fails, 
+        // but for consistency with bluebook, let's treat it as an error for now.
+        return res.status(500).json({
+          success: false,
+          message: 'Error uploading vehicle image',
           error: error.message
         });
       }
@@ -149,6 +190,7 @@ export const addVehicle = async (req, res) => {
       plateNumber: plateNumber.trim().toUpperCase(),
       mileage: Number(mileage),
       bluebookImage: bluebookImagePath,
+      vehicleImage: vehicleImagePath,
       lastService: req.body.lastService || new Date(),
       nextService: req.body.nextService || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
     });
@@ -163,7 +205,14 @@ export const addVehicle = async (req, res) => {
       try {
         vehicleObj.bluebookImageUrl = await getBluebookImageUrl(vehicleObj.bluebookImage);
       } catch (error) {
-        console.error('Error generating image URL:', error);
+        console.error('Error generating bluebook URL:', error);
+      }
+    }
+    if (vehicleObj.vehicleImage) {
+      try {
+        vehicleObj.vehicleImageUrl = await getVehicleImageUrl(vehicleObj.vehicleImage);
+      } catch (error) {
+        console.error('Error generating vehicle URL:', error);
       }
     }
 
@@ -258,13 +307,21 @@ export const deleteVehicle = async (req, res) => {
       });
     }
 
-    // Delete bluebook image from MinIO if it exists
+    // Delete images from MinIO if they exist
     if (vehicle.bluebookImage) {
       try {
         await deleteBluebookImage(vehicle.bluebookImage);
         console.log('Bluebook image deleted from MinIO:', vehicle.bluebookImage);
       } catch (error) {
         console.error('Error deleting bluebook image:', error);
+      }
+    }
+    if (vehicle.vehicleImage) {
+      try {
+        await deleteVehicleImage(vehicle.vehicleImage);
+        console.log('Vehicle image deleted from MinIO:', vehicle.vehicleImage);
+      } catch (error) {
+        console.error('Error deleting vehicle image:', error);
       }
     }
 
@@ -297,13 +354,21 @@ export const getPendingVehicles = async (req, res) => {
       vehicles.map(async (vehicle) => {
         const vehicleObj = vehicle.toObject();
         
-        // Generate presigned URL for bluebook image
+        // Generate presigned URLs
         if (vehicleObj.bluebookImage) {
           try {
             vehicleObj.bluebookImageUrl = await getBluebookImageUrl(vehicleObj.bluebookImage);
           } catch (error) {
-            console.error('Error generating image URL:', error);
+            console.error('Error generating bluebook URL:', error);
             vehicleObj.bluebookImageUrl = null;
+          }
+        }
+        if (vehicleObj.vehicleImage) {
+          try {
+            vehicleObj.vehicleImageUrl = await getVehicleImageUrl(vehicleObj.vehicleImage);
+          } catch (error) {
+            console.error('Error generating vehicle URL:', error);
+            vehicleObj.vehicleImageUrl = null;
           }
         }
 

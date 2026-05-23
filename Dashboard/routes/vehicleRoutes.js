@@ -37,7 +37,10 @@ router.get('/', getVehicles);
 router.get('/:id', getVehicle);
 
 // Add new vehicle (with file upload)
-router.post('/', upload.single('image'), addVehicle);
+router.post('/', upload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'optionalImage', maxCount: 1 }
+]), addVehicle);
 
 // Update vehicle
 router.put('/:id', updateVehicle);

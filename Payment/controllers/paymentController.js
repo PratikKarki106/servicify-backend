@@ -3,13 +3,19 @@
 import Payment from '../models/Payment.js';
 import PackagePurchase from '../models/PackagePurchase.js';
 import khaltiService from '../services/khaltiService.js';
+import esewaService from '../services/esewaService.js';
 import { app } from '../Config/khaltiConfig.js';
+import { app as esewaAppConfig } from '../Config/esewaConfig.js';
 import User from '../../Users/models/User.js';
 import Appointment from '../../BookAppointment/models/Appointment.js';
 import Package from '../../Package/models/Package.js';
 import mongoose from 'mongoose';
 import Notification from '../../Users/models/Notification.js';
 import AdminNotification from '../../Users/models/AdminNotification.js';
+import { earnPoints } from '../../Loyalty/services/loyaltyService.js';
+import RedemptionLog from '../../Loyalty/models/RedemptionLog.js';
+import Cart from '../../Catalogue/models/Cart.js';
+import Purchase from '../../Catalogue/models/Purchase.js';
 
 // @desc    Get total income from completed payments
 // @route   GET /payment/admin/total-income
@@ -58,10 +64,10 @@ const getTotalIncome = async (req, res) => {
 // @access  Private
 const initiatePayment = async (req, res) => {
     try {
-        const { paymentType, itemId, amount } = req.body;
+        const { paymentType, itemId, amount, redeemedValue = 0, gateway = 'khalti' } = req.body;
         const userObjectId = req.user._id;  // ObjectId from auth middleware
 
-        console.log('Payment initiation request:', { paymentType, itemId, amount, userObjectId: userObjectId.toString() });
+        console.log('Payment initiation request:', { paymentType, itemId, amount, redeemedValue, gateway, userObjectId: userObjectId.toString() });
 
         // Get the full user to access numeric userId
         const user = await User.findById(userObjectId);
@@ -83,8 +89,18 @@ const initiatePayment = async (req, res) => {
             });
         }
 
+        const numericAmount = Number(amount);
+        if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid amount'
+            });
+        }
+
+        const requestedRedeemedValue = Math.max(0, Number(redeemedValue || 0));
+
         // Validate payment type
-        if (!['appointment', 'package'].includes(paymentType)) {
+        if (!['appointment', 'package', 'purchase'].includes(paymentType)) {
             return res.status(400).json({
                 success: false,
                 error: 'Invalid payment type'
@@ -171,6 +187,27 @@ const initiatePayment = async (req, res) => {
                     error: 'You have already purchased this package. Each package can only be purchased once.'
                 });
             }
+        } else if (paymentType === 'purchase') {
+            const cart = await Cart.findOne({ userId: req.user._id });
+            if (!cart || !cart.items || cart.items.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Cart is empty'
+                });
+            }
+            itemIdObj = 'cart';
+        }
+
+        let verifiedRedeemedValue = 0;
+        if (requestedRedeemedValue > 0) {
+            const redemptionLog = await RedemptionLog.findOne({
+                userId: userObjectId,
+                orderId: String(itemId)
+            }).sort({ redeemedAt: -1 });
+
+            if (redemptionLog) {
+                verifiedRedeemedValue = Number(redemptionLog.discountApplied || 0);
+            }
         }
 
         // Get user info for customer_info (already fetched above)
@@ -178,7 +215,7 @@ const initiatePayment = async (req, res) => {
 
         // Generate unique purchase order ID
         const purchaseOrderId = khaltiService.generatePurchaseOrderId(
-            paymentType === 'appointment' ? 'APPT' : 'PKG',
+            paymentType === 'appointment' ? 'APPT' : paymentType === 'package' ? 'PKG' : 'PUR',
             itemId
         );
 
@@ -192,16 +229,24 @@ const initiatePayment = async (req, res) => {
         // Prepare purchase order name
         const purchaseOrderName = paymentType === 'appointment'
             ? 'Appointment Payment'
-            : 'Package Purchase';
+            : paymentType === 'package'
+                ? 'Package Purchase'
+                : 'Catalog Purchase';
 
-        // Create payment record in database
+// Create payment record in database
         const paymentData = {
             userId: userObjectId,
             paymentType,
             purchaseOrderId,
-            amount: amount,
-            amountInPaisa: amount * 100,
-            paymentStatus: 'initiated'
+            amount: numericAmount,
+            amountInPaisa: numericAmount * 100,
+            paymentStatus: 'initiated',
+            gateway: gateway,
+            callbackData: {
+                loyalty: {
+                    redeemedValue: verifiedRedeemedValue
+                }
+            }
         };
 
         // Set the appropriate ID field based on payment type
@@ -210,51 +255,112 @@ const initiatePayment = async (req, res) => {
             const appointment = await Appointment.findOne({ appointmentId: itemIdObj });
             paymentData.appointmentId = itemIdObj;  // Numeric appointmentId
             paymentData.appointmentDbId = appointment._id;  // MongoDB _id
-        } else {
+        } else if (paymentType === 'package') {
             // For packages, store the package _id
             paymentData.packageId = itemIdObj;
+        } else {
+            paymentData.callbackData = {
+                ...paymentData.callbackData,
+                cartRef: 'cart'
+            };
         }
 
-        const payment = new Payment(paymentData);
+const payment = new Payment(paymentData);
 
         await payment.save();
 
-        // Initiate payment with Khalti
-        const result = await khaltiService.initiatePayment({
-            amount,
-            purchaseOrderId,
-            purchaseOrderName,
-            customerInfo
-        });
+        // Initiate payment with the selected gateway
+        let result;
+        if (gateway === 'esewa') {
+            // Generate transaction UUID for eSewa v2 API
+            const transactionUuid = esewaService.generateTransactionUuid();
+            
+            // Generate form payload for eSewa v2 API (form-based)
+            const esewaPayload = esewaService.generatePaymentFormPayload({
+                amount: numericAmount,
+                taxAmount: 0,  // Can be customized based on business logic
+                serviceCharge: 0,
+                deliveryCharge: 0,
+                transactionUuid
+            });
 
-        console.log('Khalti response:', result);
+            console.log('eSewa v2 payload generation:', esewaPayload);
 
-        if (!result.success) {
-            // Update payment record as failed
-            payment.paymentStatus = 'failed';
-            payment.callbackData = { error: result.error, details: result.details };
+            if (!esewaPayload.success) {
+                // Update payment record as failed
+                payment.paymentStatus = 'failed';
+                payment.callbackData = { error: esewaPayload.error };
+                await payment.save();
+
+                console.error('eSewa payload generation failed:', esewaPayload.error);
+
+                return res.status(400).json({
+                    success: false,
+                    error: esewaPayload.error
+                });
+            }
+
+            // Store eSewa transaction data for verification later
+            payment.esewaTransactionUuid = transactionUuid;
+            payment.esewaFormPayload = esewaPayload.payload;
             await payment.save();
 
-            console.error('Khalti initiation failed:', result.error, result.details);
-
-            return res.status(400).json({
-                success: false,
-                error: result.error,
-                details: result.details
+            result = {
+                success: true,
+                // Return the form payload and endpoint for frontend to submit
+                esewaPayload: esewaPayload.payload,
+                esewaFormEndpoint: esewaService.v2ApiEndpoint,
+                transactionUuid,
+                purchaseOrderId
+            };
+        } else {
+            // Default to Khalti
+            result = await khaltiService.initiatePayment({
+                amount: numericAmount,
+                purchaseOrderId,
+                purchaseOrderName,
+                customerInfo
             });
+
+            console.log('Khalti response:', result);
+
+            if (!result.success) {
+                // Update payment record as failed
+                payment.paymentStatus = 'failed';
+                payment.callbackData = { error: result.error, details: result.details };
+                await payment.save();
+
+                console.error('Khalti initiation failed:', result.error, result.details);
+
+                return res.status(400).json({
+                    success: false,
+                    error: result.error,
+                    details: result.details
+                });
+            }
+
+            // Update payment with Khalti pidx
+            payment.khaltiPidx = result.pidx;
+            await payment.save();
         }
 
-        // Update payment with Khalti pidx
-        payment.khaltiPidx = result.pidx;
-        await payment.save();
-
-        // Return payment URL to frontend
-        res.json({
-            success: true,
-            paymentUrl: result.paymentUrl,
-            pidx: result.pidx,
-            purchaseOrderId
-        });
+        // Return response based on gateway
+        if (gateway === 'esewa') {
+            res.json({
+                success: true,
+                esewaPayload: result.esewaPayload,
+                esewaFormEndpoint: result.esewaFormEndpoint,
+                transactionUuid: result.transactionUuid,
+                purchaseOrderId
+            });
+        } else {
+            res.json({
+                success: true,
+                paymentUrl: result.paymentUrl,
+                pidx: result.pidx,
+                purchaseOrderId
+            });
+        }
 
     } catch (error) {
         console.error('Initiate payment error:', error);
@@ -349,6 +455,15 @@ const khaltiCallback = async (req, res) => {
                     console.log('✅ User notification created for successful payment');
                 }
 
+                // Loyalty earning happens only after successful payment completion.
+                // If points were redeemed on this order, send redeemedValue from checkout to prevent double-dipping.
+                await earnPoints({
+                    userId: payment.userId,
+                    totalExpenditure: payment.amount,
+                    referenceId: payment._id.toString(),
+                    redeemedValue: Number(payment.callbackData?.loyalty?.redeemedValue || 0)
+                });
+
                 // Create admin notification for payment received
                 await AdminNotification.create({
                     title: 'Payment Received 💰',
@@ -442,6 +557,46 @@ const khaltiCallback = async (req, res) => {
                 return res.redirect(
                     `${app.frontendUrl}/payment/success?type=package&id=${packagePurchase._id}`
                 );
+            } else if (payment.paymentType === 'purchase') {
+                const cart = await Cart.findOne({ userId: payment.userId });
+                if (!cart || !cart.items?.length) {
+                    return res.redirect(`${app.frontendUrl}/payment/failed?error=Cart empty`);
+                }
+
+                const purchase = await Purchase.create({
+                    purchaseCode: `CAT-${Date.now()}`,
+                    userId: payment.userId,
+                    items: cart.items.map((i) => ({
+                        catalogItemId: i.catalogItemId,
+                        itemName: i.itemSnapshot?.itemName || 'Catalog Item',
+                        quantity: i.quantity,
+                        unitPrice: i.unitPrice,
+                        totalPrice: i.totalPrice
+                    })),
+                    subtotal: cart.subtotal,
+                    discount: 0,
+                    totalAmount: cart.subtotal,
+                    paymentStatus: 'completed'
+                });
+
+                payment.purchaseId = purchase._id;
+                await payment.save();
+
+                await earnPoints({
+                    userId: payment.userId,
+                    totalExpenditure: purchase.totalAmount,
+                    referenceId: purchase._id.toString(),
+                    redeemedValue: Number(payment.callbackData?.loyalty?.redeemedValue || 0),
+                    description: 'Points earned from catalog purchase'
+                });
+
+                cart.items = [];
+                cart.subtotal = 0;
+                await cart.save();
+
+                return res.redirect(
+                    `${app.frontendUrl}/payment/success?type=purchase&id=${purchase._id}`
+                );
             }
         } else {
             // Payment failed or not completed
@@ -480,6 +635,266 @@ const khaltiCallback = async (req, res) => {
     }
 };
 
+// @desc    eSewa v2 API callback endpoint (eSewa redirects user here after payment)
+// @route   POST /api/payment/esewa/callback
+// @access  Public (called by eSewa)
+const esewaCallback = async (req, res) => {
+    try {
+        console.log('eSewa v2 callback received. Query:', req.query, 'Body:', req.body);
+
+        let responseData = req.body;
+
+        // eSewa v2 redirects via GET with ?data=...
+        if (req.query.data) {
+            try {
+                const decodedString = Buffer.from(req.query.data, 'base64').toString('utf-8');
+                responseData = JSON.parse(decodedString);
+                console.log('Decoded eSewa v2 callback data:', responseData);
+            } catch (err) {
+                console.error('Error decoding eSewa callback data:', err);
+                return res.redirect(`${app.frontendUrl}/payment/failed?error=Invalid+callback+data`);
+            }
+        }
+
+        const { 
+            total_amount, 
+            transaction_uuid,
+            product_code,
+            signature,
+            signed_field_names,
+            status
+        } = responseData;
+
+        // Verify all required fields are present
+        if (!signature || !signed_field_names || !total_amount || !transaction_uuid || !product_code) {
+            console.error('eSewa callback: Missing required fields');
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid callback - missing required fields'
+            });
+        }
+
+        // Verify signature integrity
+        const signatureVerification = esewaService.verifyResponseSignature(responseData);
+        
+        if (!signatureVerification.success) {
+            console.error('eSewa signature verification failed');
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid signature'
+            });
+        }
+
+        // Find the payment record using transaction_uuid
+        const payment = await Payment.findOne({ 
+            esewaTransactionUuid: transaction_uuid
+        });
+
+        if (!payment) {
+            console.error('eSewa callback: Payment record not found');
+            return res.redirect(`${app.frontendUrl}/payment/failed?error=Payment+not+found`);
+        }
+
+        // Store complete callback data
+        payment.callbackData = { esewaResponse: responseData };
+        await payment.save();
+
+        // Check if payment is completed
+        if (status === 'COMPLETE') {
+            // Update payment record
+            payment.paymentStatus = 'completed';
+            payment.esewaStatus = status;
+            payment.esewaResponse = responseData;
+            payment.completedAt = new Date();
+            await payment.save();
+
+            // Get user info for notification
+            const user = await User.findById(payment.userId);
+            const userNumericId = user ? user.userId : null;
+
+            // Handle based on payment type (same logic as Khalti)
+            if (payment.paymentType === 'appointment') {
+                const updateResult = await Appointment.findByIdAndUpdate(
+                    payment.appointmentDbId,
+                    { status: 'completed', paymentId: payment._id },
+                    { new: true }
+                );
+
+                if (updateResult && userNumericId) {
+                    await Notification.create({
+                        userId: userNumericId,
+                        title: 'Payment Successful! 🎉',
+                        message: `Your payment of Rs. ${payment.amount} for appointment #${payment.appointmentId} has been received successfully.`,
+                        type: 'appointment',
+                        metadata: {
+                            appointmentId: payment.appointmentId.toString(),
+                            paymentId: payment._id.toString(),
+                            amount: payment.amount,
+                            link: `/user/history/${payment.appointmentId}`
+                        }
+                    });
+                }
+
+                await earnPoints({
+                    userId: payment.userId,
+                    totalExpenditure: payment.amount,
+                    referenceId: payment._id.toString(),
+                    redeemedValue: Number(payment.callbackData?.loyalty?.redeemedValue || 0)
+                });
+
+                await AdminNotification.create({
+                    title: 'Payment Received 💰',
+                    message: `Received Rs. ${payment.amount} from ${user?.name || 'User'} for appointment #${payment.appointmentId}`,
+                    type: 'payment',
+                    priority: 'high',
+                    metadata: {
+                        appointmentId: payment.appointmentId.toString(),
+                        userId: userNumericId,
+                        paymentId: payment._id.toString(),
+                        amount: payment.amount,
+                        gateway: 'esewa'
+                    }
+                });
+
+                return res.redirect(
+                    `${app.frontendUrl}/payment/success?type=appointment&id=${payment.appointmentId}&gateway=esewa`
+                );
+
+            } else if (payment.paymentType === 'package') {
+                const pkg = await Package.findById(payment.packageId);
+                const packageCredits = pkg.credits || Math.floor(payment.amount / 100);
+                const validityDays = pkg.validityDays || 365;
+                const expiryDate = new Date();
+                expiryDate.setDate(expiryDate.getDate() + validityDays);
+
+                const packagePurchase = new PackagePurchase({
+                    userId: payment.userId,
+                    packageId: payment.packageId,
+                    packageName: pkg.name,
+                    totalCredits: packageCredits,
+                    remainingCredits: packageCredits,
+                    amount: payment.amount,
+                    paymentId: payment._id,
+                    expiryDate
+                });
+
+                await packagePurchase.save();
+                await Package.findByIdAndUpdate(payment.packageId, { $inc: { totalPurchases: 1 } });
+                payment.packagePurchaseId = packagePurchase._id;
+                await payment.save();
+
+                await earnPoints({
+                    userId: payment.userId,
+                    totalExpenditure: payment.amount,
+                    referenceId: packagePurchase._id.toString(),
+                    redeemedValue: Number(payment.callbackData?.loyalty?.redeemedValue || 0)
+                });
+
+                if (userNumericId) {
+                    await Notification.create({
+                        userId: userNumericId,
+                        title: 'Package Purchased Successfully! 📦',
+                        message: `Your payment of Rs. ${payment.amount} for ${pkg.name} has been received.`,
+                        type: 'general',
+                        metadata: {
+                            packageId: payment.packageId.toString(),
+                            packagePurchaseId: packagePurchase._id.toString(),
+                            amount: payment.amount,
+                            link: '/user/packages'
+                        }
+                    });
+                }
+
+                await AdminNotification.create({
+                    title: 'Package Payment Received 💰',
+                    message: `Received Rs. ${payment.amount} from ${user?.name || 'User'} for ${pkg.name} package`,
+                    type: 'payment',
+                    priority: 'high',
+                    metadata: {
+                        packageId: payment.packageId.toString(),
+                        userId: userNumericId,
+                        paymentId: payment._id.toString(),
+                        amount: payment.amount,
+                        gateway: 'esewa'
+                    }
+                });
+
+                return res.redirect(
+                    `${app.frontendUrl}/payment/success?type=package&id=${packagePurchase._id}&gateway=esewa`
+                );
+
+            } else if (payment.paymentType === 'purchase') {
+                const cart = await Cart.findOne({ userId: payment.userId });
+                if (cart && cart.items?.length) {
+                    const purchase = await Purchase.create({
+                        purchaseCode: `CAT-${Date.now()}`,
+                        userId: payment.userId,
+                        items: cart.items.map((i) => ({
+                            catalogItemId: i.catalogItemId,
+                            itemName: i.itemSnapshot?.itemName || 'Catalog Item',
+                            quantity: i.quantity,
+                            unitPrice: i.unitPrice,
+                            totalPrice: i.totalPrice
+                        })),
+                        subtotal: cart.subtotal,
+                        totalAmount: cart.subtotal,
+                        paymentStatus: 'completed'
+                    });
+
+                    payment.purchaseId = purchase._id;
+                    await payment.save();
+
+                    await earnPoints({
+                        userId: payment.userId,
+                        totalExpenditure: purchase.totalAmount,
+                        referenceId: purchase._id.toString(),
+                        redeemedValue: Number(payment.callbackData?.loyalty?.redeemedValue || 0),
+                        description: 'Points earned from catalog purchase'
+                    });
+
+                    cart.items = [];
+                    cart.subtotal = 0;
+                    await cart.save();
+
+                    return res.redirect(
+                        `${app.frontendUrl}/payment/success?type=purchase&id=${purchase._id}&gateway=esewa`
+                    );
+                }
+            }
+        }
+
+        // Payment failed or not completed
+        payment.paymentStatus = 'failed';
+        payment.esewaStatus = status;
+        await payment.save();
+
+        const user = await User.findById(payment.userId);
+        const userNumericId = user ? user.userId : null;
+
+        if (userNumericId) {
+            await Notification.create({
+                userId: userNumericId,
+                title: 'Payment Failed ❌',
+                message: `Your payment of Rs. ${payment.amount} could not be processed.`,
+                type: 'general',
+                metadata: {
+                    paymentId: payment._id.toString(),
+                    amount: payment.amount,
+                    link: '/user/payment'
+                }
+            });
+        }
+
+        return res.redirect(
+            `${app.frontendUrl}/payment/failed?error=Payment+${status || 'failed'}`
+        );
+
+    } catch (error) {
+        console.error('eSewa callback error:', error);
+        res.redirect(`${app.frontendUrl}/payment/failed?error=Server+error`);
+    }
+};
+
 // @desc    Verify payment status (called by frontend after callback)
 // @route   POST /api/payment/verify
 // @access  Private
@@ -498,7 +913,14 @@ const verifyPayment = async (req, res) => {
         // Find payment
         let payment;
         if (pidx) {
-            payment = await Payment.findOne({ khaltiPidx: pidx, userId });
+            payment = await Payment.findOne({ 
+                $or: [
+                    { khaltiPidx: pidx }, 
+                    { esewaBookingId: pidx },
+                    { esewaTransactionUuid: pidx }
+                ], 
+                userId 
+            });
         } else {
             payment = await Payment.findOne({ purchaseOrderId, userId });
         }
@@ -516,16 +938,40 @@ const verifyPayment = async (req, res) => {
                 success: true,
                 status: 'completed',
                 paymentType: payment.paymentType,
-                referenceId: payment.appointmentId || payment.packagePurchaseId
+                referenceId: payment.appointmentId || payment.packagePurchaseId || payment.purchaseId
             });
         }
 
-        // Verify with Khalti
+        // Handle eSewa payment verification
+        if (payment.gateway === 'esewa') {
+            const esewaId = payment.esewaTransactionUuid || payment.esewaBookingId;
+            if (esewaId) {
+                const verification = await esewaService.checkPaymentStatus(
+                    esewaId, 
+                    payment.amount
+                );
+
+                if (verification.success && verification.status === 'COMPLETE') {
+                    payment.paymentStatus = 'completed';
+                    payment.esewaStatus = verification.status;
+                    payment.completedAt = new Date();
+                    await payment.save();
+
+                    return res.json({
+                        success: true,
+                        status: 'completed',
+                        paymentType: payment.paymentType,
+                        referenceId: payment.appointmentId || payment.packagePurchaseId || payment.purchaseId
+                    });
+                }
+            }
+        }
+
+        // Handle Khalti payment verification
         if (payment.khaltiPidx) {
             const verification = await khaltiService.lookupPayment(payment.khaltiPidx);
 
             if (verification.success && verification.status === 'Completed') {
-                // Update payment status
                 payment.paymentStatus = 'completed';
                 payment.khaltiStatus = verification.status;
                 payment.khaltiTransactionId = verification.transactionId;
@@ -536,7 +982,7 @@ const verifyPayment = async (req, res) => {
                     success: true,
                     status: 'completed',
                     paymentType: payment.paymentType,
-                    referenceId: payment.appointmentId || payment.packagePurchaseId
+                    referenceId: payment.appointmentId || payment.packagePurchaseId || payment.purchaseId
                 });
             }
         }
@@ -545,7 +991,7 @@ const verifyPayment = async (req, res) => {
         res.json({
             success: true,
             status: payment.paymentStatus,
-            khaltiStatus: payment.khaltiStatus
+            gatewayStatus: payment.khaltiStatus || payment.esewaStatus
         });
 
     } catch (error) {
@@ -593,6 +1039,7 @@ const getPaymentHistory = async (req, res) => {
 export {
     initiatePayment,
     khaltiCallback,
+    esewaCallback,
     verifyPayment,
     getPaymentHistory,
     getTotalIncome
