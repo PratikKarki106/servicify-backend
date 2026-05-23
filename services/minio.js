@@ -99,10 +99,145 @@ export async function getProfilePictureUrl(objectName) {
 // Delete profile picture
 export async function deleteProfilePicture(objectName) {
   const useMinio = await checkMinioAvailability();
-  
+
   if (!useMinio) {
     throw new Error('MinIO storage is not available');
   }
-  
+
   await minioClient.removeObject(bucketName, objectName);
+}
+
+// Upload bluebook image
+export async function uploadBluebookImage(file, userId) {
+  const useMinio = await checkMinioAvailability();
+  const timestamp = Date.now();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  const objectName = `bluebooks/${userId}/${timestamp}_${file.originalname}`;
+
+  await minioClient.putObject(
+    bucketName,
+    objectName,
+    file.buffer,
+    file.size,
+    { 'Content-Type': file.mimetype }
+  );
+
+  return objectName;
+}
+
+// Generate a pre-signed URL for bluebook image (expires in 1 hour)
+export async function getBluebookImageUrl(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  return await minioClient.presignedGetObject(
+    bucketName,
+    objectName,
+    60 * 60
+  );
+}
+
+// Delete bluebook image
+export async function deleteBluebookImage(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  await minioClient.removeObject(bucketName, objectName);
+}
+
+// Upload vehicle image
+export async function uploadVehicleImage(file, userId) {
+  const useMinio = await checkMinioAvailability();
+  const timestamp = Date.now();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  const objectName = `vehicles/${userId}/${timestamp}_${file.originalname}`;
+
+  await minioClient.putObject(
+    bucketName,
+    objectName,
+    file.buffer,
+    file.size,
+    { 'Content-Type': file.mimetype }
+  );
+
+  return objectName;
+}
+
+// Generate a pre-signed URL for vehicle image (expires in 1 hour)
+export async function getVehicleImageUrl(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  return await minioClient.presignedGetObject(
+    bucketName,
+    objectName,
+    60 * 60
+  );
+}
+
+// Delete vehicle image
+export async function deleteVehicleImage(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  await minioClient.removeObject(bucketName, objectName);
+}
+
+// Catalog item images (shared by admin upload + public catalog display via presigned URLs)
+export async function uploadCatalogItemImage(file) {
+  const useMinio = await checkMinioAvailability();
+  const timestamp = Date.now();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  const safeName = (file.originalname || 'image').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const objectName = `catalog/items/${timestamp}_${safeName}`;
+
+  await minioClient.putObject(
+    bucketName,
+    objectName,
+    file.buffer,
+    file.size,
+    { 'Content-Type': file.mimetype }
+  );
+
+  return objectName;
+}
+
+const CATALOG_IMAGE_URL_TTL_SEC = 7 * 24 * 60 * 60; // 7 days
+
+export async function getCatalogItemImageUrl(objectName) {
+  const useMinio = await checkMinioAvailability();
+
+  if (!useMinio) {
+    throw new Error('MinIO storage is not available');
+  }
+
+  return await minioClient.presignedGetObject(
+    bucketName,
+    objectName,
+    CATALOG_IMAGE_URL_TTL_SEC
+  );
 }

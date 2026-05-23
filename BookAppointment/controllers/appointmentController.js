@@ -1,12 +1,15 @@
 import Appointment from "../models/Appointment.js";
 import Notification from "../../Users/models/Notification.js";
 import AdminNotification from "../../Users/models/AdminNotification.js";
+import User from "../../Users/models/User.js";
 import errorMessages from "../../utils/errorMessages.js";
+import jwt from "jsonwebtoken";
+import { sendPaymentInvoiceEmail } from "../../ForgotPassword/utils/emailService.js";
 
 // 🔢 Slot limits per service
 const SLOT_LIMITS = {
   servicing: 3,
-  repair: 2,
+  repair: 1,
   checkup: 2,
   wash: 2,
 };
@@ -19,8 +22,10 @@ const SERVICE_SLOTS = {
     '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM'
   ],
   repair: [
-    '09:00 AM', '10:30 AM', '12:00 PM', '02:30 PM', '04:00 PM', '05:30 PM'
-  ], 
+    '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM',
+    '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM',
+    '05:00 PM', '06:00 PM'
+  ],
   checkup: [
     '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM',
     '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM',
@@ -35,6 +40,63 @@ const SERVICE_SLOTS = {
     '04:00 PM', '04:20 PM', '04:40 PM', '05:00 PM',
     '05:20 PM', '05:40 PM', '06:00 PM'
   ],
+};
+
+const INVOICE_TOKEN_EXPIRY = "7d";
+
+const getInvoiceSecret = () => process.env.INVOICE_TOKEN_SECRET || process.env.JWT_SECRET;
+
+const buildInvoiceUrl = (appointmentId, token) => {
+  const frontendBase = process.env.CLIENT_URL || "http://localhost:5173";
+  return `${frontendBase.replace(/\/$/, "")}/invoice/${appointmentId}?token=${encodeURIComponent(token)}`;
+};
+
+const createInvoiceToken = ({ appointmentId, email }) => {
+  return jwt.sign(
+    {
+      appointmentId: Number(appointmentId),
+      email: (email || "").toLowerCase(),
+      purpose: "invoice-view"
+    },
+    getInvoiceSecret(),
+    { expiresIn: INVOICE_TOKEN_EXPIRY }
+  );
+};
+
+const verifyInvoiceToken = ({ token, appointmentId, email }) => {
+  const decoded = jwt.verify(token, getInvoiceSecret());
+  const tokenAppointmentId = Number(decoded.appointmentId);
+
+  if (decoded.purpose !== "invoice-view" || tokenAppointmentId !== Number(appointmentId)) {
+    return { valid: false };
+  }
+
+  const tokenEmail = (decoded.email || "").toLowerCase();
+  const targetEmail = (email || "").toLowerCase();
+
+  if (tokenEmail && targetEmail && tokenEmail !== targetEmail) {
+    return { valid: false };
+  }
+
+  return { valid: true };
+};
+
+const mapBillItemsForClient = (items = []) =>
+  items.map((item, index) => ({
+    id: item?._id?.toString() || `item-${index}`,
+    itemName: item.itemName,
+    itemPrice: Number(item.itemPrice || 0),
+    serviceCharge: Number(item.serviceCharge || 0)
+  }));
+
+const calculateBillTotals = (items = []) => {
+  const subtotal = items.reduce((sum, item) => sum + Number(item.itemPrice || 0), 0);
+  const serviceCharge = items.reduce((sum, item) => sum + Number(item.serviceCharge || 0), 0);
+  return {
+    subtotal,
+    serviceCharge,
+    total: subtotal + serviceCharge
+  };
 };
 
 
@@ -103,11 +165,12 @@ export const createAppointment = async (req, res) => {
       servicePool = ["repair", "checkup"];
     }
 
-    // 🔢 Count existing appointments for this date/time/service pool
+    // 🔢 Count existing ACTIVE appointments for this date/time/service pool
     const existingCount = await Appointment.countDocuments({
       date,
       time,
       serviceType: { $in: servicePool },
+      status: { $ne: "cancelled" } // Exclude cancelled ones
     });
 
     const limit = SLOT_LIMITS[serviceType];
@@ -116,6 +179,7 @@ export const createAppointment = async (req, res) => {
     }
 
     if (existingCount >= limit) {
+      console.log(`[CreateAppointment] SLOT FULL: ${date} ${time} ${serviceType}. Count: ${existingCount}, Limit: ${limit}`);
       return res.status(409).json({
         success: false,
         message: "Slot full for selected service",
@@ -222,9 +286,17 @@ export const getSlotAvailability = async (req, res) => {
         const count = await Appointment.countDocuments({
           date,
           time,
-          serviceType: { $in: pool }
+          serviceType: { $in: pool },
+          status: { $ne: "cancelled" } // Only count active ones
         });
-        return { time, available: count < SLOT_LIMITS[serviceType] };
+        const isAvailable = count < SLOT_LIMITS[serviceType];
+        
+        // Debugging log for specific category limits
+        if (count > 0) {
+           console.log(`[AvailabilityCheck] ${date} ${time} ${serviceType}: Count=${count}, Limit=${SLOT_LIMITS[serviceType]}, Available=${isAvailable}`);
+        }
+
+        return { time, available: isAvailable };
       })
     );
 
@@ -284,6 +356,60 @@ export const getAppointmentById = async (req, res) => {
       code: "DB_QUERY_FAILED",
       message: errorMessages.DB_QUERY_FAILED,
       error: error.message,
+    });
+  }
+};
+
+export const getPublicInvoice = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Invoice token is required"
+      });
+    }
+
+    const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) }).lean();
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: errorMessages.APPOINTMENT_NOT_FOUND
+      });
+    }
+
+    const tokenResult = verifyInvoiceToken({
+      token,
+      appointmentId: appointment.appointmentId,
+      email: appointment.email
+    });
+
+    if (!tokenResult.valid) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired invoice link"
+      });
+    }
+
+    const billItems = mapBillItemsForClient(appointment.billItems || []);
+    const totals = calculateBillTotals(billItems);
+
+    return res.json({
+      success: true,
+      appointment: {
+        ...appointment,
+        billItems
+      },
+      totals
+    });
+  } catch (error) {
+    console.error("GET PUBLIC INVOICE ERROR:", error);
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired invoice link"
     });
   }
 };
@@ -398,12 +524,81 @@ export const updateAppointmentStatus = async (req, res) => {
 
     // Store the previous status to determine notification message
     const previousStatus = appointment.status;
+    const isTransitioningToPayment = previousStatus === "in-progress" && status === "payment";
+
+    if (status === "payment" && !["in-progress", "payment"].includes(previousStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status can only move to payment from in-progress"
+      });
+    }
+
+    if (isTransitioningToPayment && (!appointment.billItems || appointment.billItems.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please add bill items before changing status to payment"
+      });
+    }
 
     // Update status and set updatedAt timestamp
     appointment.status = status;
     appointment.updatedAt = new Date();
 
     await appointment.save();
+
+    if (isTransitioningToPayment) {
+      let recipientEmail = appointment.email;
+
+      if (!recipientEmail) {
+        const userRecord = await User.findOne({ userId: Number(appointment.userId) }).select("email name");
+        if (userRecord?.email) {
+          recipientEmail = userRecord.email;
+          appointment.email = appointment.email || userRecord.email;
+          appointment.name = appointment.name || userRecord.name;
+          appointment.updatedAt = new Date();
+          await appointment.save();
+        }
+      }
+
+      if (!recipientEmail) {
+        appointment.status = previousStatus;
+        appointment.updatedAt = new Date();
+        await appointment.save();
+        return res.status(400).json({
+          success: false,
+          message: "User email is missing. Please update the appointment email before requesting payment."
+        });
+      }
+
+      const invoiceToken = createInvoiceToken({
+        appointmentId: appointment.appointmentId,
+        email: recipientEmail
+      });
+
+      const invoiceUrl = buildInvoiceUrl(appointment.appointmentId, invoiceToken);
+
+      const emailSent = await sendPaymentInvoiceEmail({
+        to: recipientEmail,
+        customerName: appointment.name,
+        appointmentId: appointment.appointmentId,
+        serviceType: appointment.serviceType,
+        serviceDate: appointment.date,
+        serviceTime: appointment.time,
+        billItems: appointment.billItems || [],
+        invoiceUrl
+      });
+
+      if (!emailSent) {
+        appointment.status = previousStatus;
+        appointment.updatedAt = new Date();
+        await appointment.save();
+
+        return res.status(500).json({
+          success: false,
+          message: "Failed to send payment invoice email. Status was not changed."
+        });
+      }
+    }
 
     // Get the io instance to emit WebSocket events
     const io = req.app.get('io');
@@ -624,58 +819,26 @@ export const updateBillItems = async (req, res) => {
     const { appointmentId } = req.params;
     const { billItems } = req.body;
 
-    console.log("📝 UPDATE BILL ITEMS - Appointment ID:", appointmentId);
-    console.log("📝 UPDATE BILL ITEMS - Bill Items:", billItems);
-
-    if (!billItems || !Array.isArray(billItems)) {
-      return res.status(400).json({
-        success: false,
-        message: "Bill items array is required"
-      });
-    }
-
     const appointment = await Appointment.findOne({ appointmentId: parseInt(appointmentId) });
 
     if (!appointment) {
       return res.status(404).json({
         success: false,
-        code: "APPOINTMENT_NOT_FOUND",
-        message: errorMessages.APPOINTMENT_NOT_FOUND,
+        message: "Appointment not found"
       });
     }
 
-    // Update bill items
     appointment.billItems = billItems;
     appointment.updatedAt = new Date();
-
     await appointment.save();
-
-    console.log("✅ Bill items saved successfully for appointment:", appointmentId);
-
-    // Get io instance for WebSocket
-    const io = req.app.get('io');
-
-    // Emit WebSocket event for bill update
-    if (io) {
-      io.to(`user_${appointment.userId}`).emit('bill_updated', {
-        appointmentId: appointment.appointmentId,
-        message: `Bill has been updated for your appointment`
-      });
-    }
 
     res.json({
       success: true,
       message: "Bill items updated successfully",
       appointment
     });
-
   } catch (error) {
     console.error("UPDATE BILL ITEMS ERROR 👉", error);
-    res.status(500).json({
-      success: false,
-      code: "DB_UPDATE_FAILED",
-      message: errorMessages.DB_UPDATE_FAILED || "Failed to update bill items",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };

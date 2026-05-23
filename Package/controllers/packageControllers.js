@@ -162,25 +162,42 @@ export const getUserPackages = async (req, res) => {
 
     // Find all package purchases for this user
     // Include packages even if they're expired/deleted from admin
+    console.log(`[DEBUG] getUserPackages called for userId: ${userId} (${typeof userId})`);
+    
     const purchases = await PackagePurchase.find({ userId })
       .populate('packageId')
       .sort({ purchasedAt: -1 });
+    
+    console.log(`[DEBUG] Found ${purchases.length} purchases for user ${userId}`);
+    if (purchases.length > 0) {
+      console.log(`[DEBUG] Sample purchase ID: ${purchases[0]._id}`);
+    }
 
     // Format the response
-    const userPackages = purchases.map(purchase => ({
-      _id: purchase._id,
-      packageName: purchase.packageName,
-      totalCredits: purchase.totalCredits,
-      usedCredits: purchase.usedCredits,
-      remainingCredits: purchase.remainingCredits,
-      amount: purchase.amount,
-      purchasedAt: purchase.purchasedAt,
-      expiryDate: purchase.expiryDate,
-      isActive: purchase.isActive && purchase.expiryDate > new Date() && purchase.remainingCredits > 0,
-      // Store original package data if still available
-      originalPackage: purchase.packageId,
-      purchaseId: purchase._id
-    }));
+    const userPackages = purchases.map(purchase => {
+      // Logic to determine if the user's purchase is still active
+      // It should remain active until its own expiry date, regardless of admin deactivation
+      const isUserPurchaseActive = purchase.isActive && 
+                                  new Date(purchase.expiryDate) > new Date() && 
+                                  purchase.remainingCredits > 0;
+      
+      return {
+        _id: purchase._id,
+        packageId: purchase.packageId ? purchase.packageId._id : null,
+        packageName: purchase.packageName,
+        totalCredits: purchase.totalCredits,
+        usedCredits: purchase.usedCredits,
+        remainingCredits: purchase.remainingCredits,
+        amount: purchase.amount,
+        purchasedAt: purchase.purchasedAt,
+        expiryDate: purchase.expiryDate,
+        isActive: isUserPurchaseActive,
+        isTemplateActive: purchase.packageId ? purchase.packageId.isActive : false,
+        // Store original package data if still available
+        originalPackage: purchase.packageId,
+        purchaseId: purchase._id
+      };
+    });
 
     res.json({ success: true, data: userPackages });
   } catch (error) {

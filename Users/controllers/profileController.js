@@ -31,11 +31,22 @@ export const getProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Generate pre-signed URL if profile picture exists
+    // Generate profile picture URL
     let profilePictureUrl = null;
     if (user.profilePicture) {
       try {
-        profilePictureUrl = await getProfilePictureUrl(user.profilePicture);
+        // Check if it's an external URL (e.g., Google OAuth profile picture)
+        if (user.profilePicture.startsWith('http://') || user.profilePicture.startsWith('https://')) {
+          // Proxy through our backend to avoid CORS and rate limiting issues
+          const backendUrl = process.env.CLIENT_URL?.replace('5173', '5000') || 'http://localhost:5000';
+          const proxyUrl = `${backendUrl}/api/image-proxy?url=${encodeURIComponent(user.profilePicture)}`;
+          profilePictureUrl = proxyUrl;
+          console.log('[getProfile] Using proxied external profile picture URL');
+        } else {
+          // It's a MinIO object path, generate pre-signed URL
+          profilePictureUrl = await getProfilePictureUrl(user.profilePicture);
+          console.log('[getProfile] Generated MinIO profile picture URL:', profilePictureUrl);
+        }
       } catch (urlError) {
         console.error('Error generating profile picture URL:', urlError.message);
         // If URL generation fails, still return the profile but without the URL

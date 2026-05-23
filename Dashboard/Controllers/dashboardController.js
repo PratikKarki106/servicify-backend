@@ -1,5 +1,6 @@
 import Appointment from '../../BookAppointment/models/Appointment.js';
 import Payment from '../../Payment/models/Payment.js';
+import UserLoyalty from '../../Loyalty/models/UserLoyalty.js';
 
 // @desc    Get user dashboard stats
 // @route   GET /api/dashboard/stats
@@ -37,8 +38,9 @@ export const getUserStats = async (req, res) => {
 
     console.log('Total spent:', totalSpent);
 
-    // Calculate loyalty points (1 point per Rs. 100 spent)
-    const loyaltyPoints = Math.floor(totalSpent / 100);
+    // Dashboard should show persisted loyalty balance, not only computed estimate.
+    const loyalty = await UserLoyalty.findOne({ userId: user._id });
+    const loyaltyPoints = loyalty?.pointsBalance || 0;
 
     // Fetch upcoming services (booked, confirmed, or in-progress appointments) - uses numeric userId
     const upcomingServices = await Appointment.countDocuments({

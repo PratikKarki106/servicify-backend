@@ -1,6 +1,6 @@
 import express from "express";
 import { authenticateJWT } from "../../Users/middleware/authenticateJWT.js";
-import { getConversations, getMessages, createMessage } from "../controllers/messageController.js";
+import { getConversations, getMessages, createMessage, getAdminUnreadCount, markAsRead } from "../controllers/messageController.js";
 
 const router = express.Router();
 
@@ -12,5 +12,7 @@ router.use(authenticateJWT);
 router.get("/conversations", getConversations);
 router.get("/conversation/:partnerId", getMessages);
 router.post("/", createMessage);
+router.get("/admin/unread-count", getAdminUnreadCount);
+router.patch("/read/:senderId", markAsRead);
 
 export default router;

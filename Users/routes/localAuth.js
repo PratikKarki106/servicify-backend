@@ -86,21 +86,36 @@ router.post("/signup", async (req, res) => {
     console.log("Signup attempt with email:", email);
     const normalizedEmail = email.toLowerCase();
     const trimmedName = name.trim();
+    
+    // Check if user already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
+    console.log("Existing user check result:", existingUser ? `User found: ${existingUser.email}` : "No user found - email is available");
 
     if (existingUser) {
+      console.log("User already exists with email:", normalizedEmail);
       return res.status(400).json({ error: "User already exists. Please sign in." });
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    const newUser = await User.create({
-      name: trimmedName,
-      email: normalizedEmail,
-      password: hashedPassword,
-      role: role || "user",
-      isVerified: false, // User is not verified initially
-    });
+    let newUser;
+    try {
+      newUser = await User.create({
+        name: trimmedName,
+        email: normalizedEmail,
+        password: hashedPassword,
+        role: role || "user",
+        isVerified: false,
+      });
+    } catch (dbError) {
+      // Handle MongoDB duplicate key error specifically
+      if (dbError.code === 11000) {
+        console.error("Duplicate key error for email:", normalizedEmail);
+        return res.status(400).json({ error: "User already exists. Please sign in." });
+      }
+      // Re-throw other database errors
+      throw dbError;
+    }
 
     // Automatically send verification email after registration
     try {

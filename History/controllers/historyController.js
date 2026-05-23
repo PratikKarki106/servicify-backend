@@ -182,28 +182,19 @@ export const getHistory = async (req, res) => {
       allItems = packages.map(pkg => ({ ...pkg, _type: 'package' }));
     }
 
-    // Apply pagination if not exporting
-    let paginatedItems = allItems;
-    let totalPages = 1;
-    
-    if (!isExport) {
-      paginatedItems = allItems.slice(skip, skip + limitNum);
-      totalPages = Math.ceil(allItems.length / limitNum);
-    }
-
-    // Group by date
-    const appointmentItems = paginatedItems.filter(item => item._type === 'appointment');
-    const packageItems = paginatedItems.filter(item => item._type === 'package');
+    // ── Group by date (all matching items) ───────────────────────────────────
+    const appointmentItems = allItems.filter(item => item._type === 'appointment');
+    const packageItems = allItems.filter(item => item._type === 'package');
 
     const appointmentGroups = groupByDate(appointmentItems, 'appointment');
     const packageGroups = groupByDate(packageItems, 'package');
 
-    // Merge groups
-    const allGroups = {};
+    // Merge groups into a sorted list of unique dates
+    const allGroupsMap = {};
     
     [...appointmentGroups, ...packageGroups].forEach(group => {
-      if (!allGroups[group.date]) {
-        allGroups[group.date] = {
+      if (!allGroupsMap[group.date]) {
+        allGroupsMap[group.date] = {
           date: group.date,
           items: [],
           totalRevenue: 0,
@@ -212,14 +203,14 @@ export const getHistory = async (req, res) => {
         };
       }
       
-      allGroups[group.date].items.push(...group.items);
-      allGroups[group.date].totalRevenue += group.totalRevenue;
-      allGroups[group.date].appointmentCount += group.appointmentCount;
-      allGroups[group.date].packageCount += group.packageCount;
+      allGroupsMap[group.date].items.push(...group.items);
+      allGroupsMap[group.date].totalRevenue += group.totalRevenue;
+      allGroupsMap[group.date].appointmentCount += group.appointmentCount;
+      allGroupsMap[group.date].packageCount += group.packageCount;
     });
 
-    // Sort items within each group by time
-    const groups = Object.values(allGroups)
+    // Sort all groups by date
+    const sortedGroups = Object.values(allGroupsMap)
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .map(group => ({
         ...group,
@@ -230,6 +221,15 @@ export const getHistory = async (req, res) => {
         })
       }));
 
+    // ── Apply Group-Based Pagination ──────────────────────────────────────────
+    let paginatedGroups = sortedGroups;
+    let totalPages = 1;
+    
+    if (!isExport) {
+      paginatedGroups = sortedGroups.slice(skip, skip + limitNum);
+      totalPages = Math.ceil(sortedGroups.length / limitNum);
+    }
+
     // Calculate summary
     const totalRevenue = appointments.reduce((sum, apt) => sum + (apt.totalAmount || 0), 0) +
                          packages.reduce((sum, pkg) => sum + (pkg.amount || 0), 0);
@@ -237,11 +237,11 @@ export const getHistory = async (req, res) => {
     res.json({
       success: true,
       data: {
-        groups,
+        groups: paginatedGroups,
         pagination: {
           currentPage: pageNum,
           totalPages,
-          totalItems: allItems.length,
+          totalItems: sortedGroups.length, // Total number of dates
           itemsPerPage: limitNum
         },
         summary: {

@@ -1,6 +1,26 @@
 import mongoose from 'mongoose';
 
 const catalogSchema = new mongoose.Schema({
+  companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company',
+    required: true
+  },
+  productId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+    required: true
+  },
+  versionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Version',
+    required: true
+  },
+  ccId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CC',
+    required: true
+  },
   itemName: {
     type: String,
     required: true,
@@ -32,6 +52,15 @@ const catalogSchema = new mongoose.Schema({
     default: function() {
       return this.itemPrice + this.serviceCharge;
     }
+  },
+  imageUrl: {
+    type: String,
+    default: ''
+  },
+  /** MinIO object key (e.g. catalog/items/...) — presigned URL is derived in API responses as imageUrl */
+  imageObjectKey: {
+    type: String,
+    default: ''
   },
   isActive: {
     type: Boolean,

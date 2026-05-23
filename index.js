@@ -5,6 +5,7 @@ import notificationRoutes from "./Users/routes/notificationRoutes.js";
 import adminNotificationRoutes from "./Users/routes/adminNotificationRoutes.js";
 import profileRoutes from "./Users/routes/profileRoutes.js";
 import adminUserRoutes from "./Users/routes/adminUserRoutes.js";
+import imageProxyRoutes from "./Users/routes/imageProxy.js";
 import "./Users/config/passport.js";
 import express from "express";
 import cors from "cors";
@@ -13,6 +14,10 @@ import passport from "./Users/config/passport.js";
 import appointmentRoutes from "./BookAppointment/routes/appointmentRoutes.js";
 import errorHandler from "./middleware/errorHandler.js";
 import catalogRoutes from "./Catalogue/routes/catalogRoutes.js";
+import companyRoutes from "./Catalogue/routes/companyRoutes.js";
+import productRoutes from "./Catalogue/routes/productRoutes.js";
+import versionRoutes from "./Catalogue/routes/versionRoutes.js";
+import ccRoutes from "./Catalogue/routes/ccRoutes.js";
 import packageRoutes from "./Package/routes/packageRoutes.js";
 import forgotPasswordRoutes from "./ForgotPassword/Routes/forgotPasswordRoutes.js";
 import vehicleRoutes from "./Dashboard/routes/vehicleRoutes.js";
@@ -23,6 +28,8 @@ import paymentRoutes from "./Payment/Routes/paymentRoutes.js";
 import analyticsRoutes from "./Analytics/routes/analyticsRoutes.js";
 import userAnalyticsRoutes from "./Analytics/routes/userAnalyticsRoutes.js";
 import historyRoutes from "./History/routes/historyRoutes.js";
+import loyaltyRoutes from "./Loyalty/routes/loyaltyRoutes.js";
+import cartPurchaseRoutes from "./Catalogue/routes/cartPurchaseRoutes.js";
 import http from "http";
 import setupWebSocket from "./Sockets/index.js"; // 👈 Import our organized socket setup
 
@@ -31,7 +38,7 @@ const server = http.createServer(app);
 
 const allowedOrigins = [
   process.env.CLIENT_URL,
-  "http://192.168.254.1:5173",
+  "http://192.168.254.9:5173",
   "http://localhost:5173",
 ];
 
@@ -45,7 +52,9 @@ app.use(cors({
     }
     return callback(null, true);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Add PATCH and OPTIONS
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-User-Id'] 
 }));
 
 app.use(express.json());
@@ -66,10 +75,15 @@ app.set('io', io);
 // Routes
 app.use("/auth", authRoutes);
 app.use("/auth", localAuthRoutes);
+app.use("/api", imageProxyRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/admin/notifications", adminNotificationRoutes);
 app.use("/appointments", appointmentRoutes);
 app.use("/api", catalogRoutes);
+app.use("/api", companyRoutes);
+app.use("/api", productRoutes);
+app.use("/api", versionRoutes);
+app.use("/api", ccRoutes);
 app.use("/api/packages", packageRoutes);
 app.use('/forgot-password', forgotPasswordRoutes);
 app.use("/vehicles", vehicleRoutes);
@@ -82,6 +96,8 @@ app.use("/admin/users", adminUserRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/analytics/user", userAnalyticsRoutes);
 app.use("/api/history", historyRoutes);
+app.use("/api/loyalty", loyaltyRoutes);
+app.use("/api", cartPurchaseRoutes);
 
 app.get("/", (req, res) => {
   res.send("Servicify backend is running!");
@@ -92,5 +108,5 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📡 Network access: http://192.168.254.1:${PORT}`);
+  console.log(`📡 Network access: http://192.168.254.9:${PORT}`);
 });

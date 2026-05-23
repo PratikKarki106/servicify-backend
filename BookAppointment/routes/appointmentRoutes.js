@@ -4,6 +4,7 @@ import {
   getSlotAvailability,
   getAppointmentsByUser,
   getAppointmentById,
+  getPublicInvoice,
   getAllAppointments,
   updateAppointmentStatus,
   updateAppointment,
@@ -19,6 +20,7 @@ router.post('/', createAppointment);
 router.get('/availability', getSlotAvailability);
 router.get('/user/:userId', getAppointmentsByUser);
 router.get('/appointment/:appointmentId', getAppointmentById);
+router.get('/appointment/:appointmentId/invoice', getPublicInvoice);
 
 // Update routes
 router.patch('/appointment/:appointmentId/status', updateAppointmentStatus);

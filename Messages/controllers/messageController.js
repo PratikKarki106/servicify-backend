@@ -3,6 +3,37 @@ import User from "../../Users/models/User.js";
 
 const ADMIN_ID = "admin";
 
+// Get unread message count for admin — returns distinct USER count (not message count)
+export const getAdminUnreadCount = async (req, res) => {
+  try {
+    // Count unique users (senders) who have at least one unread message to admin
+    const distinctSenders = await Message.distinct('senderId', {
+      receiverId: ADMIN_ID,
+      senderRole: 'user',
+      read: false
+    });
+    return res.json({ success: true, count: distinctSenders.length });
+  } catch (err) {
+    console.error("getAdminUnreadCount error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Mark all messages from a user to admin as read
+export const markAsRead = async (req, res) => {
+  try {
+    const { senderId } = req.params;
+    await Message.updateMany(
+      { senderId, receiverId: ADMIN_ID, read: false },
+      { $set: { read: true } }
+    );
+    res.json({ success: true, message: "Messages marked as read" });
+  } catch (err) {
+    console.error("markAsRead error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // Get conversation list: for admin = users who have chatted; for user = just admin
 export const getConversations = async (req, res) => {
   try {
