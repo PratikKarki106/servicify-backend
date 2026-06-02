@@ -9,6 +9,7 @@ import {
   getAdminOffersWithStats,
   getBalance,
   getOffers,
+  getRedemptionForOrder,
   getTransactions,
   redeem,
   updateAdminOffer
@@ -19,6 +20,7 @@ const router = express.Router();
 router.get("/balance", authenticateJWT, getBalance);
 router.get("/transactions", authenticateJWT, getTransactions);
 router.get("/offers", authenticateJWT, getOffers);
+router.get("/redemption/:orderId", authenticateJWT, getRedemptionForOrder);
 router.post("/redeem", authenticateJWT, redeem);
 router.post("/earn", authenticateJWT, earn);
 router.post("/expire", expire); // Intended for cron/system calls

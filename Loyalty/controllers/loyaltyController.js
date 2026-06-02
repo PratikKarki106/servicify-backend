@@ -66,6 +66,20 @@ export const redeem = async (req, res) => {
   }
 };
 
+export const getRedemptionForOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const redemption = await RedemptionLog.findOne({
+      userId: req.user._id,
+      orderId: String(orderId)
+    }).populate("offerId");
+
+    return res.json({ success: true, data: redemption });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 export const earn = async (req, res) => {
   try {
     const { totalExpenditure, referenceId, redeemedValue = 0, eventType = "payment_completed" } = req.body;

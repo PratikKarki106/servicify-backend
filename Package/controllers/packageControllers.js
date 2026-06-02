@@ -53,7 +53,7 @@ export const getPackageById = async (req, res) => {
 // Create package
 export const createPackage = async (req, res) => {
   try {
-    const { name, description, actualPrice, discountedPrice, purchaseDeadline, features, serviceType, isActive } = req.body;
+    const { name, description, actualPrice, discountedPrice, purchaseDeadline, features, serviceType, isActive, credits, validityDays } = req.body;
     
     // Validate features array length
     if (!features || !Array.isArray(features) || features.length === 0) {
@@ -64,6 +64,10 @@ export const createPackage = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Features cannot exceed 5 items' });
     }
 
+    if (!credits || credits <= 0) {
+      return res.status(400).json({ success: false, message: 'Credits must be a positive number' });
+    }
+
     const newPackage = new Package({
       name,
       description,
@@ -72,7 +76,9 @@ export const createPackage = async (req, res) => {
       purchaseDeadline,
       features,
       serviceType,
-      isActive
+      isActive,
+      credits,
+      validityDays: validityDays || 365
     });
     
     await newPackage.save();
@@ -85,25 +91,31 @@ export const createPackage = async (req, res) => {
 // Update package
 export const updatePackage = async (req, res) => {
   try {
-    const { name, description, actualPrice, discountedPrice, purchaseDeadline, features, serviceType, isActive } = req.body;
+    const { name, description, actualPrice, discountedPrice, purchaseDeadline, features, serviceType, isActive, credits, validityDays } = req.body;
     
     // Validate features array length if provided
     if (features && features.length > 5) {
       return res.status(400).json({ success: false, message: 'Features cannot exceed 5 items' });
     }
 
+    const updateData = {
+      name,
+      description,
+      actualPrice,
+      discountedPrice,
+      purchaseDeadline,
+      features,
+      serviceType,
+      isActive
+    };
+
+    // Only include credits/validityDays if provided
+    if (credits !== undefined) updateData.credits = credits;
+    if (validityDays !== undefined) updateData.validityDays = validityDays;
+
     const updatedPackage = await Package.findByIdAndUpdate(
       req.params.id,
-      {
-        name,
-        description,
-        actualPrice,
-        discountedPrice,
-        purchaseDeadline,
-        features,
-        serviceType,
-        isActive
-      },
+      updateData,
       { new: true, runValidators: true }
     );
     
